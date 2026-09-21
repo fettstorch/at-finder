@@ -30,11 +30,30 @@ let pagingActive = false;
 let nextBatchTimer: ReturnType<typeof setTimeout> | undefined;
 let totalTested = 0;
 let completedBatches = 0;
+let highlightTerms: string[] = [];
 const accumulatedCandidates = new Map<string, Candidate>();
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[character]!);
+
+function getHighlightTerms(name: string, context: string) {
+  return [...new Set(`${name} ${context}`.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])]
+    .sort((left, right) => right.length - left.length);
+}
+
+function highlightText(value: string) {
+  if (!highlightTerms.length) return escapeHtml(value);
+  const pattern = new RegExp(
+    `(${highlightTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "giu",
+  );
+  return value.split(pattern).map((part) =>
+    highlightTerms.includes(part.toLocaleLowerCase())
+      ? `<mark>${escapeHtml(part)}</mark>`
+      : escapeHtml(part)
+  ).join("");
+}
 
 function meterColor(score: number) {
   const hue = Math.max(0, Math.min(125, score * 12.5));
@@ -80,8 +99,8 @@ function renderCandidate(candidate: Candidate) {
           <div class="profile-copy">
             <div class="profile-title">
               <div>
-                <h3>${escapeHtml(candidate.displayName || candidate.handle)}</h3>
-                <a href="${escapeHtml(candidate.profileUrl)}" target="_blank" rel="noreferrer">@${escapeHtml(candidate.handle)}</a>
+                <h3>${highlightText(candidate.displayName || candidate.handle)}</h3>
+                <a href="${escapeHtml(candidate.profileUrl)}" target="_blank" rel="noreferrer">@${highlightText(candidate.handle)}</a>
               </div>
               <div class="score" style="--score-color:${meterColor(score)}">
                 <strong>${score.toFixed(1)}</strong><span>/10</span>
@@ -92,7 +111,7 @@ function renderCandidate(candidate: Candidate) {
               ${candidate.contextSupportScore === undefined ? "" : signalBar("Context match", candidate.contextSupportScore, "#63bd8a")}
               ${candidate.contextContradictionScore === undefined ? "" : signalBar("Context contradiction", candidate.contextContradictionScore, "#dc7474")}
             </div>
-            <p class="bio">${escapeHtml(candidate.description || "No profile bio")}</p>
+            <p class="bio">${highlightText(candidate.description || "No profile bio")}</p>
           </div>
         </div>
       </div>
@@ -179,6 +198,7 @@ function scheduleSearch() {
   updateSearchToggle();
   const name = nameInput.value.trim();
   const context = contextInput.value.trim();
+  highlightTerms = getHighlightTerms(name, context);
 
   if (name.length < 2) {
     resultsSection.hidden = true;
