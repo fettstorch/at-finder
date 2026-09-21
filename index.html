@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f4f7ff">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <title>AT Finder</title>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <div class="brand-mark"><img src="/favicon.png" alt=""></div>
+        <div>
+          <p class="eyebrow">AT Protocol identity search</p>
+          <h1>Find the right account.</h1>
+          <p class="intro">Search by name, then use context to distinguish the real person from similar profiles.</p>
+        </div>
+      </header>
+
+      <section class="search-panel" aria-labelledby="search-heading">
+        <h2 id="search-heading" class="sr-only">Search for an AT Protocol account</h2>
+        <form id="search-form" autocomplete="off">
+          <div class="field">
+            <label for="person-name">Person’s name</label>
+            <input id="person-name" name="person_query" type="text" required maxlength="200"
+              autocomplete="off" data-1p-ignore data-lpignore="true" placeholder="e.g. Jane Smith">
+          </div>
+          <div class="field">
+            <label for="person-context">Context <span>optional</span></label>
+            <input id="person-context" name="context_notes" type="text" maxlength="1000" autocomplete="off"
+              data-1p-ignore data-lpignore="true" placeholder="Role, company, location, topic…">
+          </div>
+        </form>
+      </section>
+
+      <section id="results-section" class="results-section" hidden>
+        <div class="results-heading">
+          <div>
+            <p class="eyebrow">Candidates</p>
+            <h2>Possible matches</h2>
+          </div>
+          <div class="results-actions">
+            <p id="result-count" class="result-count"></p>
+            <button id="search-toggle" type="button" aria-label="Pause search" title="Pause search" hidden>⏸</button>
+          </div>
+        </div>
+        <div id="results" class="results" aria-live="polite"></div>
+      </section>
+    </main>
+    <script type="module" src="/web/main.ts"></script>
+  </body>
+</html>
