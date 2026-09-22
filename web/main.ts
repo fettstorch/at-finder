@@ -1,5 +1,7 @@
 import "./styles.css";
 import { debounce, synchronize } from "@fettstorch/jule";
+import { CandidateSelection, isCandidateToggleKey } from "./candidate-selection.js";
+import { nextBatchDelay } from "./pacing.js";
 
 type Candidate = {
   did: string;
@@ -29,9 +31,8 @@ let nextContinuation: string | undefined;
 let pagingActive = false;
 let nextBatchTimer: ReturnType<typeof setTimeout> | undefined;
 let totalTested = 0;
-let completedBatches = 0;
 let highlightTerms: string[] = [];
-const accumulatedCandidates = new Map<string, Candidate>();
+const candidateSelection = new CandidateSelection<Candidate>();
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -82,14 +83,17 @@ function signalBar(label: string, score: number, color: string) {
   </div>`;
 }
 
-function renderCandidate(candidate: Candidate) {
+function renderCandidate(candidate: Candidate, locked: boolean) {
   const score = Math.max(0, Math.min(10, candidate.matchScore));
+  const candidateName = candidate.displayName || candidate.handle;
   const avatar = candidate.avatar
     ? `<img class="avatar" src="${escapeHtml(candidate.avatar)}" alt="" loading="lazy">`
     : `<div class="avatar avatar-fallback" aria-hidden="true">@</div>`;
 
   return `
-    <article class="profile-card">
+    <article class="profile-card${locked ? " is-locked" : ""}" data-candidate-did="${escapeHtml(candidate.did)}"
+      role="button" tabindex="0" aria-pressed="${locked}"
+      aria-label="${locked ? "Unlock" : "Lock"} candidate ${escapeHtml(candidateName)}">
       <div class="confidence-track" role="meter" aria-label="Match score" aria-valuemin="0" aria-valuemax="10" aria-valuenow="${score}">
         <div class="confidence-fill" style="width:${score * 10}%;background:${meterColor(score)}"></div>
       </div>
@@ -99,11 +103,14 @@ function renderCandidate(candidate: Candidate) {
           <div class="profile-copy">
             <div class="profile-title">
               <div>
-                <h3>${highlightText(candidate.displayName || candidate.handle)}</h3>
+                <h3>${highlightText(candidateName)}</h3>
                 <a href="${escapeHtml(candidate.profileUrl)}" target="_blank" rel="noreferrer">@${highlightText(candidate.handle)}</a>
               </div>
-              <div class="score" style="--score-color:${meterColor(score)}">
-                <strong>${score.toFixed(1)}</strong><span>/10</span>
+              <div class="profile-controls">
+                ${locked ? `<span class="locked-badge"><span aria-hidden="true">🔒</span> Locked</span>` : ""}
+                <div class="score" style="--score-color:${meterColor(score)}">
+                  <strong>${score.toFixed(1)}</strong><span>/10</span>
+                </div>
               </div>
             </div>
             <div class="signal-bars" aria-label="Score breakdown">
@@ -118,6 +125,52 @@ function renderCandidate(candidate: Candidate) {
     </article>`;
 }
 
+function renderCandidateResults() {
+  const focusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+  const focusedDid = focusedElement?.closest<HTMLElement>("[data-candidate-did]")?.dataset.candidateDid;
+  const focusedKind = focusedElement?.matches("a") ? "profile" : "card";
+  const { locked, rotating } = candidateSelection.view(10);
+  updateResultCount(
+    `${rotating.length} best matches${locked.length ? ` + ${locked.length} locked` : ""} across ${totalTested} candidates`,
+  );
+
+  if (!locked.length && !rotating.length) {
+    results.innerHTML = `<div class="empty"><h3>No candidates found</h3><p>Try adding an employer, role, location, or topic.</p></div>`;
+    return;
+  }
+
+  const lockedSection = locked.length ? `
+    <section class="candidate-group locked-group" aria-labelledby="locked-candidates-heading">
+      <h3 id="locked-candidates-heading" class="sr-only">Locked candidates</h3>
+      <div class="locked-group-marker" aria-hidden="true">🔒</div>
+      <div class="candidate-list">${locked.map((candidate) => renderCandidate(candidate, true)).join("")}</div>
+    </section>` : "";
+  const rotatingSection = rotating.length ? `
+    <section class="candidate-group" aria-labelledby="rotating-candidates-heading">
+      <h3 id="rotating-candidates-heading" class="sr-only">Unlocked candidates</h3>
+      ${locked.length ? `<div class="candidate-separator" aria-hidden="true"></div>` : ""}
+      <div class="candidate-list">${rotating.map((candidate) => renderCandidate(candidate, false)).join("")}</div>
+    </section>` : "";
+  results.innerHTML = lockedSection + rotatingSection;
+  if (focusedDid) focusCandidateControl(focusedDid, focusedKind);
+}
+
+function focusCandidateControl(did: string, kind: "card" | "profile" = "card") {
+  const card = [...results.querySelectorAll<HTMLElement>("[data-candidate-did]")]
+    .find((candidateCard) => candidateCard.dataset.candidateDid === did);
+  const control = kind === "profile"
+    ? card?.querySelector<HTMLAnchorElement>("a")
+    : card;
+  if (control) control.focus();
+  else document.querySelector<HTMLElement>("#matches-heading")?.focus();
+}
+
+function toggleCandidateLock(did: string, restoreFocus = false) {
+  candidateSelection.toggle(did);
+  renderCandidateResults();
+  if (restoreFocus) focusCandidateControl(did);
+}
+
 const search = synchronize(async (
   revision: number,
   name: string,
@@ -128,7 +181,7 @@ const search = synchronize(async (
 
   activeRequest = new AbortController();
   resultsSection.hidden = false;
-  if (!accumulatedCandidates.size) {
+  if (!candidateSelection.size) {
     results.innerHTML = `<div class="loading"><span class="running-spinner" aria-hidden="true">🌀</span><p>Searching AT Protocol and comparing profiles…</p></div>`;
   }
   if (!totalTested) resultCount.textContent = "";
@@ -148,25 +201,16 @@ const search = synchronize(async (
     };
     if (!response.ok) throw new Error(body.error || "Search failed");
     if (revision !== searchRevision) return;
-    for (const candidate of body.candidates ?? []) {
-      accumulatedCandidates.set(candidate.did, candidate);
-    }
-    const candidates = [...accumulatedCandidates.values()]
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .slice(0, 10);
+    candidateSelection.upsert(body.candidates ?? []);
     totalTested += body.testedCount ?? 0;
-    completedBatches += 1;
     nextContinuation = body.continuation;
     if (!nextContinuation) pagingActive = false;
     searchToggle.hidden = !nextContinuation;
     updateSearchToggle();
-    updateResultCount(`${candidates.length} best matches across ${totalTested} candidates`);
-    results.innerHTML = candidates.length
-      ? candidates.map(renderCandidate).join("")
-      : `<div class="empty"><h3>No candidates found</h3><p>Try adding an employer, role, location, or topic.</p></div>`;
+    renderCandidateResults();
 
     if (pagingActive && nextContinuation) {
-      const delay = (1 + Math.floor(completedBatches / 5)) * 1_000;
+      const delay = nextBatchDelay(totalTested);
       nextBatchTimer = setTimeout(() => {
         void search(revision, name, context, nextContinuation);
       }, delay);
@@ -177,7 +221,7 @@ const search = synchronize(async (
     pagingActive = false;
     searchToggle.hidden = !nextContinuation;
     updateSearchToggle();
-    if (!accumulatedCandidates.size) {
+    if (!candidateSelection.size) {
       results.innerHTML = `<div class="error"><h3>Search failed</h3><p>${escapeHtml(error instanceof Error ? error.message : "Please try again.")}</p></div>`;
     }
   } finally {
@@ -190,9 +234,8 @@ function scheduleSearch() {
   activeRequest?.abort();
   if (nextBatchTimer) clearTimeout(nextBatchTimer);
   nextContinuation = undefined;
-  accumulatedCandidates.clear();
+  candidateSelection.reset();
   totalTested = 0;
-  completedBatches = 0;
   pagingActive = true;
   searchToggle.hidden = false;
   updateSearchToggle();
@@ -214,7 +257,8 @@ function scheduleSearch() {
 searchToggle.addEventListener("click", () => {
   pagingActive = !pagingActive;
   updateSearchToggle();
-  updateResultCount(`${Math.min(10, accumulatedCandidates.size)} best matches across ${totalTested} candidates`);
+  const { locked, rotating } = candidateSelection.view(10);
+  updateResultCount(`${rotating.length} best matches${locked.length ? ` + ${locked.length} locked` : ""} across ${totalTested} candidates`);
   if (nextBatchTimer) clearTimeout(nextBatchTimer);
   if (pagingActive && nextContinuation && !activeRequest) {
     void search(
@@ -224,6 +268,22 @@ searchToggle.addEventListener("click", () => {
       nextContinuation,
     );
   }
+});
+
+results.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest("a")) return;
+  const card = target.closest<HTMLElement>("[data-candidate-did]");
+  if (card?.dataset.candidateDid) toggleCandidateLock(card.dataset.candidateDid, true);
+});
+
+results.addEventListener("keydown", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.matches("[data-candidate-did]")) return;
+  if (!isCandidateToggleKey(event.key) || !target.dataset.candidateDid) return;
+  event.preventDefault();
+  toggleCandidateLock(target.dataset.candidateDid, true);
 });
 
 nameInput.addEventListener("input", scheduleSearch);

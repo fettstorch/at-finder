@@ -56,15 +56,16 @@
         <div class="results-heading">
           <div>
             <p class="eyebrow">Candidates</p>
-            <h2>Possible matches</h2>
+            <h2 id="matches-heading" tabindex="-1">Possible matches</h2>
           </div>
           <div class="results-actions">
-            <p id="result-count" class="result-count"></p>
+            <p id="result-count" class="result-count" role="status" aria-live="polite" aria-atomic="true"></p>
             <button id="search-toggle" type="button" aria-label="Pause search" title="Pause search" hidden>⏸</button>
           </div>
         </div>
-        <div id="results" class="results" aria-live="polite"></div>
+        <div id="results" class="results"></div>
       </section>
+      <p class="privacy-note">Your name and optional context are processed by this Cloudflare-hosted service, which temporarily stores search progress. Public AT Protocol search receives derived name queries, and Jev receives candidate profile fields plus your search input to score likely matches. Do not enter sensitive information.</p>
     </main>
     <script type="module" src="/web/main.ts"></script>
   </body>
