@@ -1,11 +1,30 @@
 import { searchActorsPage, type BlueskyActor } from "./bluesky.js";
+import {
+  applyBioMatchStrategies,
+  answerProbability,
+  classifyContext,
+  contextStrategyWeights,
+  jevBioMatchStrategy,
+  keywordBioMatchStrategy,
+  type ContextInterpretation,
+  type WeightedBioMatchStrategy,
+} from "./bio-match.js";
 
-export type FindActorsInput = { name: string; context?: string };
+export { answerProbability };
+
+export type FindActorsInput = {
+  name: string;
+  context?: string;
+  contextInterpretation?: ContextInterpretation;
+};
 
 export type FindActorsPage = {
   candidates: ActorResult[];
+  scoredCandidates: ActorResult[];
   testedCount: number;
-  continuation?: string;
+  hasMore: boolean;
+  contextInterpretation?: ContextInterpretation;
+  bioMatchWeights?: { keyword: number; jev: number };
 };
 
 export type ActorResult = BlueskyActor & {
@@ -13,22 +32,43 @@ export type ActorResult = BlueskyActor & {
   nameScore: number;
   contextSupportScore?: number;
   contextContradictionScore?: number;
+  bioMatchScores?: Record<string, {
+    supportScore?: number;
+    contradictionScore?: number;
+  }>;
   matchScore: number;
 };
 
-const BATCH_SIZE = 100;
-const MAX_RESULTS = 10;
+export const BATCH_SIZE = 100;
+export const MAX_RESULTS = 10;
+export const MAX_CANDIDATES_PER_SEARCH = 100_000;
 
-type SearchState = {
+export type SearchState = {
   name: string;
   context: string;
   searches: Array<{ query: string; cursor?: string; exhausted?: boolean }>;
-  seen: string[];
+  contextInterpretation?: ContextInterpretation;
+};
+
+export type SeenActors = {
+  has(did: string): boolean;
+  add(did: string): void;
+  size(): number;
 };
 
 type JevResponse = {
   answers: Record<string, { type: "noul"; noul: number }>;
 };
+
+function bioMatchStrategies(
+  interpretation: ContextInterpretation,
+): readonly WeightedBioMatchStrategy[] {
+  const weights = contextStrategyWeights(interpretation);
+  return [
+    { strategy: keywordBioMatchStrategy, weight: weights.keyword },
+    { strategy: jevBioMatchStrategy, weight: weights.jev },
+  ];
+}
 
 function nameQuestion(actor: BlueskyActor) {
   return {
@@ -47,75 +87,39 @@ function nameQuestion(actor: BlueskyActor) {
   };
 }
 
-function contextSupportQuestion(actor: BlueskyActor) {
-  return {
-    type: "noul",
-    instructions: {
-      candidate: {
-        bio: actor.description ?? "",
-      },
-      question: "Does this profile bio provide strong evidence supporting the supplied target context?",
-    },
-    criteria: {
-      true: "The bio contains strong, useful evidence for the target context.",
-      false: "The bio lacks strong supporting evidence or only matches a broad generic term.",
-    },
-  };
-}
-
-function contextContradictionQuestion(actor: BlueskyActor) {
-  return {
-    type: "noul",
-    instructions: {
-      candidate: {
-        bio: actor.description ?? "",
-      },
-      question: "Does this profile bio contradict the supplied target context?",
-    },
-    criteria: {
-      true: "The bio contains clear evidence that this is a different person or conflicts with the target context.",
-      false: "The bio is compatible with the target context, merely lacks evidence, or is empty.",
-    },
-  };
-}
-
 async function scoreCandidates(
   input: FindActorsInput,
   candidates: BlueskyActor[],
   apiKey: string,
+  interpretation?: ContextInterpretation,
 ) {
   const context = input.context?.trim();
 
   const nameQuestions = Object.fromEntries(
     candidates.map((candidate, index) => [`name_${index}`, nameQuestion(candidate)]),
   );
-  const contextQuestions = Object.fromEntries(
-    candidates.flatMap((candidate, index) => context && candidate.description?.trim() ? [
-      [`support_${index}`, contextSupportQuestion(candidate)],
-      [`contradiction_${index}`, contextContradictionQuestion(candidate)],
-    ] : []),
-  );
 
-  const [nameAnswers, contextAnswers] = await Promise.all([
+  const [nameAnswers, bioMatches] = await Promise.all([
     askJev(apiKey, { targetName: input.name }, nameQuestions),
-    context && Object.keys(contextQuestions).length
-      ? askJev(apiKey, { targetContext: context }, contextQuestions)
-      : Promise.resolve({ answers: {} } as JevResponse),
+    context
+      ? applyBioMatchStrategies(
+          bioMatchStrategies(interpretation ?? { keywordProbability: 0.5, freeTextProbability: 0.5 }),
+          context,
+          candidates,
+          apiKey,
+        )
+      : Promise.resolve(undefined),
   ]);
 
-  const body: JevResponse = {
-    answers: { ...nameAnswers.answers, ...contextAnswers.answers },
-  };
-
   return candidates.map((candidate, index) => {
-    const nameProbability = answerProbability(body, `name_${index}`);
-    const hasBio = Boolean(candidate.description?.trim());
-    const supportProbability = context && hasBio
-      ? answerProbability(body, `support_${index}`)
-      : context ? 0 : undefined;
-    const contradictionProbability = context && hasBio
-      ? answerProbability(body, `contradiction_${index}`)
-      : context ? 1 : undefined;
+    const nameProbability = answerProbability(nameAnswers, `name_${index}`);
+    const bioMatch = context ? bioMatches?.get(candidate.did) : undefined;
+    const supportProbability = context
+      ? bioMatch?.support ?? 0
+      : undefined;
+    const contradictionProbability = context
+      ? bioMatch?.contradiction ?? 1
+      : undefined;
     const probability = supportProbability === undefined
       ? nameProbability
       : Math.max(nameProbability, supportProbability)
@@ -129,9 +133,17 @@ async function scoreCandidates(
       contextContradictionScore: contradictionProbability === undefined
         ? undefined
         : toScore(contradictionProbability),
+      bioMatchScores: bioMatch
+        ? Object.fromEntries(Object.entries(bioMatch.strategies).map(([name, scores]) => [name, {
+            supportScore: scores.support === undefined ? undefined : toScore(scores.support),
+            contradictionScore: scores.contradiction === undefined
+              ? undefined
+              : toScore(scores.contradiction),
+          }]))
+        : undefined,
       matchScore: toScore(probability),
     };
-  }).sort((a, b) => b.matchScore - a.matchScore).slice(0, MAX_RESULTS);
+  }).sort((a, b) => b.matchScore - a.matchScore);
 }
 
 async function askJev(
@@ -157,19 +169,11 @@ async function askJev(
   return (await response.json()) as JevResponse;
 }
 
-function answerProbability(body: JevResponse, key: string) {
-  const probability = body.answers[key]?.noul;
-  if (typeof probability !== "number" || probability < 0 || probability > 1) {
-    throw new Error(`Jev returned an invalid answer for ${key}`);
-  }
-  return probability;
-}
-
-function toScore(probability: number) {
+export function toScore(probability: number) {
   return Math.round(probability * 100) / 10;
 }
 
-function createQueries(input: FindActorsInput) {
+export function createQueries(input: FindActorsInput) {
   const nameParts = input.name.split(/\s+/).filter((part) => part.length >= 3);
   const compactName = nameParts.join("");
   return [...new Set(
@@ -183,36 +187,26 @@ function createQueries(input: FindActorsInput) {
   )];
 }
 
-function encodeState(state: SearchState) {
-  return Buffer.from(JSON.stringify(state)).toString("base64url");
+export function createSearchState(input: FindActorsInput): SearchState {
+  return {
+    name: input.name,
+    context: input.context ?? "",
+    searches: createQueries(input).map((query) => ({ query })),
+    contextInterpretation: input.contextInterpretation,
+  };
 }
 
-function decodeState(token: string, input: FindActorsInput): SearchState {
-  try {
-    const state = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as SearchState;
-    if (
-      state.name !== input.name
-      || state.context !== (input.context ?? "")
-      || !Array.isArray(state.searches)
-      || !Array.isArray(state.seen)
-    ) throw new Error();
-    return state;
-  } catch {
-    throw new Error("Invalid continuation token");
-  }
-}
-
-async function nextCandidateBatch(state: SearchState) {
+async function nextCandidateBatch(state: SearchState, seen: SeenActors) {
   const candidates: BlueskyActor[] = [];
-  const seen = new Set(state.seen);
+  const targetSize = Math.min(BATCH_SIZE, MAX_CANDIDATES_PER_SEARCH - seen.size());
 
-  while (candidates.length < BATCH_SIZE) {
+  while (candidates.length < targetSize) {
     const active = state.searches
       .filter((search) => !search.exhausted)
-      .slice(0, BATCH_SIZE - candidates.length);
+      .slice(0, targetSize - candidates.length);
     if (!active.length) break;
 
-    const remaining = BATCH_SIZE - candidates.length;
+    const remaining = targetSize - candidates.length;
     const baseLimit = Math.floor(remaining / active.length);
     const extra = remaining % active.length;
     const pages = await Promise.all(active.map((search, index) => searchActorsPage(
@@ -226,7 +220,7 @@ async function nextCandidateBatch(state: SearchState) {
       active[index].exhausted = !page.cursor || page.actors.length === 0;
     });
 
-    for (let rank = 0; candidates.length < BATCH_SIZE; rank += 1) {
+    for (let rank = 0; candidates.length < targetSize; rank += 1) {
       let foundAtRank = false;
       for (const page of pages) {
         const actor = page.actors[rank];
@@ -235,7 +229,7 @@ async function nextCandidateBatch(state: SearchState) {
         if (seen.has(actor.did)) continue;
         seen.add(actor.did);
         candidates.push(actor);
-        if (candidates.length === BATCH_SIZE) break;
+        if (candidates.length === targetSize) break;
       }
       if (!foundAtRank) break;
     }
@@ -243,30 +237,42 @@ async function nextCandidateBatch(state: SearchState) {
     if (pages.every((page) => page.actors.length === 0)) break;
   }
 
-  state.seen = [...seen];
   return candidates;
 }
 
+/**
+ * Fetches and scores one batch. Candidates always originate from public AT
+ * Protocol search; Jev receives no mechanism to introduce handles or DIDs.
+ */
 export async function findActors(
   input: FindActorsInput,
+  state: SearchState,
+  seen: SeenActors,
   apiKey: string,
-  continuation?: string,
 ): Promise<FindActorsPage> {
-  const state: SearchState = continuation
-    ? decodeState(continuation, input)
-    : {
-        name: input.name,
-        context: input.context ?? "",
-        searches: createQueries(input).map((query) => ({ query })),
-        seen: [],
-      };
+  const context = input.context?.trim();
+  const [candidates, contextInterpretation] = await Promise.all([
+    nextCandidateBatch(state, seen),
+    context && !state.contextInterpretation
+      ? classifyContext(context, apiKey)
+      : Promise.resolve(state.contextInterpretation),
+  ]);
+  if (contextInterpretation) state.contextInterpretation = contextInterpretation;
+  const hasMore = seen.size() < MAX_CANDIDATES_PER_SEARCH
+    && state.searches.some((search) => !search.exhausted);
 
-  const candidates = await nextCandidateBatch(state);
-  const hasMore = state.searches.some((search) => !search.exhausted);
+  const scoredCandidates = candidates.length
+    ? await scoreCandidates(input, candidates, apiKey, contextInterpretation)
+    : [];
 
   return {
-    candidates: candidates.length ? await scoreCandidates(input, candidates, apiKey) : [],
+    candidates: scoredCandidates.slice(0, MAX_RESULTS),
+    scoredCandidates,
     testedCount: candidates.length,
-    continuation: hasMore ? encodeState(state) : undefined,
+    hasMore,
+    contextInterpretation,
+    bioMatchWeights: contextInterpretation
+      ? contextStrategyWeights(contextInterpretation)
+      : undefined,
   };
 }

@@ -7,5 +7,20 @@
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
-  }
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SEARCH_SESSIONS", "class_name": "SearchSession" }
+    ]
+  },
+  "exports": {
+    "SearchSession": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "ratelimits": [
+    {
+      "name": "SEARCH_RATE_LIMITER",
+      "namespace_id": "9202201",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ]
 }
