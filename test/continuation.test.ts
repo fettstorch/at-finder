@@ -44,4 +44,3 @@ test("continuation tokens reject tampering, expiry, and different input", async 
     InvalidContinuationError,
   );
 });
-
