@@ -27,6 +27,11 @@ h1 { font-size: clamp(36px, 7vw, 58px); line-height: 1.02; }
   box-shadow: 0 22px 65px #253b7314; backdrop-filter: blur(18px); }
 form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: end; }
 .field { display: grid; gap: 8px; }
+.context-field { position: relative; }
+.context-interpretation { position: absolute; z-index: 1; top: 27px; right: 11px; margin: 0; border: 1px solid #cbd7f3;
+  border-radius: 999px; background: #f4f7ff; box-shadow: 0 5px 14px #243d7d1a; color: #49649e;
+  padding: 4px 9px; font-size: 11px; font-weight: 700; line-height: 1.2; white-space: nowrap;
+  transform: translateY(-50%) rotate(1.5deg); }
 label { font-size: 14px; font-weight: 700; }
 label span { color: #97a0b5; font-weight: 500; }
 input { width: 100%; height: 50px; border: 1px solid #dfe4ef; border-radius: 13px; outline: none; background: #f9faff;
@@ -68,17 +73,23 @@ input:focus { border-color: #6b8ee9; background: #fff; box-shadow: 0 0 0 4px #37
 .profile-title a { display: inline-block; margin-top: 3px; color: #315fd5; font-size: 14px; text-decoration: none; }
 .profile-title a:hover { text-decoration: underline; }
 .profile-controls { display: flex; align-items: center; align-self: start; gap: 7px; }
-.locked-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; background: #edf2ff; color: #31559d; padding: 6px 9px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .score { display: flex; align-items: baseline; border-radius: 999px; padding: 7px 11px; background: color-mix(in srgb, var(--score-color) 22%, white); color: #27314b; white-space: nowrap; }
 .score strong { font-size: 17px; }.score span { color: #747f96; font-size: 12px; }
-.signal-bars { display: grid; gap: 6px; margin-top: 14px; }
+.metrics-details { margin-top: 12px; }
+.metrics-details summary { width: max-content; color: #596b96; font-size: 11px; font-weight: 700; cursor: pointer; }
+.metrics-details summary:hover { color: #315fd5; }
+.metrics-details summary:focus-visible { outline: 2px solid #376ce345; outline-offset: 3px; border-radius: 3px; }
+.signal-bars { display: grid; gap: 6px; margin-top: 9px; }
 .signal { display: grid; grid-template-columns: minmax(100px, 126px) minmax(40px, 180px) 26px; align-items: center; gap: 8px; color: #667189; font-size: 11px; }
 .signal-label { font-weight: 600; }
+.weight-badge { display: inline-block; margin-left: 3px; border-radius: 999px; background: #fff0cc; color: #986c18;
+  padding: 1px 4px; font-size: 9px; font-weight: 800; line-height: 1.2; vertical-align: 1px; }
 .signal-track { height: 5px; overflow: hidden; border-radius: 999px; background: #edf0f5; }
 .signal-track span { display: block; height: 100%; border-radius: inherit; }
 .signal strong { color: #59647c; font-size: 11px; text-align: right; }
 .bio { margin: 14px 0 0; color: #69738a; font-size: 14px; line-height: 1.55; }
 mark { border-radius: 3px; background: #fff0a8; color: inherit; padding: 0 .08em; font-size: 1.06em; font-weight: 700; }
+mark.context-highlight { background: rgb(255 240 168 / var(--highlight-opacity, 1)); }
 .loading, .empty, .error { display: grid; justify-items: center; gap: 10px; padding: 44px; border: 1px dashed #d9deea; border-radius: 20px; color: #758097; text-align: center; background: #ffffff8f; }
 .loading p, .empty p, .error p { margin: 0; }
 .running-spinner { display: inline-block; margin-right: 6px; animation: spin 1s linear infinite reverse; }

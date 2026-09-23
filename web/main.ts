@@ -1,9 +1,10 @@
 import "./styles.css";
 import { debounce, synchronize } from "@fettstorch/jule";
+import { tokenizeEnglishKeywords, tokenizeTerms } from "../src/english-stopwords.js";
 import { CandidateSelection, isCandidateToggleKey } from "./candidate-selection.js";
 import { nextBatchDelay } from "./pacing.js";
 
-type Candidate = {
+export type Candidate = {
   did: string;
   handle: string;
   displayName?: string;
@@ -13,47 +14,71 @@ type Candidate = {
   nameScore: number;
   contextSupportScore?: number;
   contextContradictionScore?: number;
+  bioMatchScores?: Record<string, {
+    supportScore?: number;
+    contradictionScore?: number;
+  }>;
   matchScore: number;
 };
 
 const form = document.querySelector<HTMLFormElement>("#search-form")!;
 const nameInput = document.querySelector<HTMLInputElement>("#person-name")!;
 const contextInput = document.querySelector<HTMLInputElement>("#person-context")!;
+const contextInterpretation = document.querySelector<HTMLElement>("#context-interpretation")!;
 const resultsSection = document.querySelector<HTMLElement>("#results-section")!;
 const results = document.querySelector<HTMLElement>("#results")!;
 const resultCount = document.querySelector<HTMLElement>("#result-count")!;
 const searchToggle = document.querySelector<HTMLButtonElement>("#search-toggle")!;
 const debounceLock = {};
 const searchLock = {};
+const contextDebounceLock = {};
+const contextLock = {};
+const INPUT_DEBOUNCE_MS = 300;
 let searchRevision = 0;
+let contextRevision = 0;
 let activeRequest: AbortController | undefined;
+let activeContextRequest: AbortController | undefined;
 let nextContinuation: string | undefined;
 let pagingActive = false;
 let nextBatchTimer: ReturnType<typeof setTimeout> | undefined;
 let totalTested = 0;
-let highlightTerms: string[] = [];
+let nameHighlightTerms: string[] = [];
+let contextHighlightTerms: string[] = [];
+let bioMatchWeights: { keyword: number; jev: number } | undefined;
+type ContextInterpretation = { keywordProbability: number; freeTextProbability: number };
+type ContextAnalysis = {
+  contextInterpretation: ContextInterpretation;
+  bioMatchWeights: { keyword: number; jev: number };
+};
+let currentContextAnalysis: { context: string; promise: Promise<ContextAnalysis | undefined> } | undefined;
+let resolvePendingContext: ((value: ContextAnalysis | undefined) => void) | undefined;
 const candidateSelection = new CandidateSelection<Candidate>();
+const debugUi = import.meta.env?.DEV
+  ? import("./debug.js").then(({ createDebugUi }) => createDebugUi(
+      document.querySelector<HTMLElement>(".search-panel")!,
+    ))
+  : undefined;
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[character]!);
 
-function getHighlightTerms(name: string, context: string) {
-  return [...new Set(`${name} ${context}`.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])]
-    .sort((left, right) => right.length - left.length);
-}
-
 function highlightText(value: string) {
+  const highlightTerms = [...new Set([...nameHighlightTerms, ...contextHighlightTerms])]
+    .sort((left, right) => right.length - left.length);
   if (!highlightTerms.length) return escapeHtml(value);
   const pattern = new RegExp(
     `(${highlightTerms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
     "giu",
   );
-  return value.split(pattern).map((part) =>
-    highlightTerms.includes(part.toLocaleLowerCase())
-      ? `<mark>${escapeHtml(part)}</mark>`
-      : escapeHtml(part)
-  ).join("");
+  return value.split(pattern).map((part) => {
+    const normalized = part.toLocaleLowerCase();
+    if (nameHighlightTerms.includes(normalized)) return `<mark>${escapeHtml(part)}</mark>`;
+    if (contextHighlightTerms.includes(normalized)) {
+      return `<mark class="context-highlight" style="--highlight-opacity:${bioMatchWeights?.keyword ?? 1}">${escapeHtml(part)}</mark>`;
+    }
+    return escapeHtml(part);
+  }).join("");
 }
 
 function meterColor(score: number) {
@@ -74,13 +99,118 @@ function updateResultCount(message: string) {
     : message;
 }
 
-function signalBar(label: string, score: number, color: string) {
+function showContextInterpretation(
+  interpretation?: ContextInterpretation,
+) {
+  if (!contextInput.value.trim()) {
+    contextInterpretation.hidden = true;
+    contextInterpretation.textContent = "";
+    return;
+  }
+  contextInterpretation.hidden = false;
+  contextInterpretation.textContent = interpretation
+    ? interpretation.keywordProbability >= interpretation.freeTextProbability
+      ? "Keywords"
+      : "Description"
+    : "Reading context…";
+}
+
+const analyzeContext = synchronize(async (
+  revision: number,
+  context: string,
+): Promise<ContextAnalysis | undefined> => {
+  if (revision !== contextRevision) return undefined;
+  activeContextRequest = new AbortController();
+  try {
+    const response = await fetch("/api/context", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ context }),
+      signal: activeContextRequest.signal,
+    });
+    const body = await response.json() as ContextAnalysis & { error?: string };
+    if (!response.ok) throw new Error(body.error || "Context analysis failed");
+    if (revision !== contextRevision) return undefined;
+    showContextInterpretation(body.contextInterpretation);
+    bioMatchWeights = body.bioMatchWeights;
+    return body;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return undefined;
+    if (revision === contextRevision) {
+      contextInterpretation.hidden = false;
+      contextInterpretation.textContent = "Context analysis failed";
+    }
+    throw error;
+  } finally {
+    if (revision === contextRevision) activeContextRequest = undefined;
+  }
+}, contextLock);
+
+function scheduleContextAnalysis() {
+  const revision = ++contextRevision;
+  activeContextRequest?.abort();
+  resolvePendingContext?.(undefined);
+  resolvePendingContext = undefined;
+  const context = contextInput.value.trim();
+  bioMatchWeights = undefined;
+  if (!context) {
+    showContextInterpretation();
+    currentContextAnalysis = { context, promise: Promise.resolve(undefined) };
+    return;
+  }
+  showContextInterpretation();
+  let resolveAnalysis!: (value: ContextAnalysis | undefined) => void;
+  let rejectAnalysis!: (reason?: unknown) => void;
+  const promise = new Promise<ContextAnalysis | undefined>((resolve, reject) => {
+    resolveAnalysis = resolve;
+    rejectAnalysis = reject;
+  });
+  resolvePendingContext = resolveAnalysis;
+  currentContextAnalysis = { context, promise };
+  debounce(
+    () => void (async () => {
+      try {
+        resolveAnalysis(await analyzeContext(revision, context));
+      } catch (error) {
+        rejectAnalysis(error);
+      } finally {
+        if (revision === contextRevision) resolvePendingContext = undefined;
+      }
+    })(),
+    INPUT_DEBOUNCE_MS,
+    contextDebounceLock,
+  );
+}
+
+function contextAnalysisFor(context: string) {
+  if (currentContextAnalysis?.context === context) return currentContextAnalysis.promise;
+  scheduleContextAnalysis();
+  return currentContextAnalysis?.promise ?? Promise.resolve(undefined);
+}
+
+function signalBar(label: string, score: number, color: string, factor?: number) {
   const safeScore = Math.max(0, Math.min(10, score));
   return `<div class="signal">
-    <span class="signal-label">${label}</span>
+    <span class="signal-label">${label}${factor === undefined ? "" : ` <small class="weight-badge">×${factor.toFixed(2)}</small>`}</span>
     <span class="signal-track"><span style="width:${safeScore * 10}%;background:${color}"></span></span>
     <strong>${safeScore.toFixed(1)}</strong>
   </div>`;
+}
+
+function strategyLabel(name: string) {
+  return name === "jev" ? "Jev" : name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function bioMatchSignalBars(candidate: Candidate) {
+  if (!candidate.bioMatchScores) return "";
+  return Object.entries(candidate.bioMatchScores).map(([name, scores]) => {
+    const label = strategyLabel(name);
+    const factor = name === "keyword" && bioMatchWeights && bioMatchWeights.keyword < bioMatchWeights.jev
+      ? bioMatchWeights.keyword
+      : undefined;
+    return `${scores.supportScore === undefined ? "" : signalBar(`${label} match`, scores.supportScore, "#63bd8a", factor)}
+      ${scores.contradictionScore === undefined ? "" : signalBar(`${label} mismatch`, scores.contradictionScore, "#dc7474")}`;
+  }).join("");
 }
 
 function renderCandidate(candidate: Candidate, locked: boolean) {
@@ -107,17 +237,21 @@ function renderCandidate(candidate: Candidate, locked: boolean) {
                 <a href="${escapeHtml(candidate.profileUrl)}" target="_blank" rel="noreferrer">@${highlightText(candidate.handle)}</a>
               </div>
               <div class="profile-controls">
-                ${locked ? `<span class="locked-badge"><span aria-hidden="true">🔒</span> Locked</span>` : ""}
                 <div class="score" style="--score-color:${meterColor(score)}">
                   <strong>${score.toFixed(1)}</strong><span>/10</span>
                 </div>
               </div>
             </div>
-            <div class="signal-bars" aria-label="Score breakdown">
-              ${signalBar("Name", candidate.nameScore, "#6488e8")}
-              ${candidate.contextSupportScore === undefined ? "" : signalBar("Context match", candidate.contextSupportScore, "#63bd8a")}
-              ${candidate.contextContradictionScore === undefined ? "" : signalBar("Context contradiction", candidate.contextContradictionScore, "#dc7474")}
-            </div>
+            <details class="metrics-details">
+              <summary>Score details</summary>
+              <div class="signal-bars" aria-label="Score breakdown">
+                ${signalBar("Name", candidate.nameScore, "#6488e8")}
+                ${candidate.bioMatchScores
+                  ? bioMatchSignalBars(candidate)
+                  : `${candidate.contextSupportScore === undefined ? "" : signalBar("Context match", candidate.contextSupportScore, "#63bd8a")}
+                    ${candidate.contextContradictionScore === undefined ? "" : signalBar("Context contradiction", candidate.contextContradictionScore, "#dc7474")}`}
+              </div>
+            </details>
             <p class="bio">${highlightText(candidate.description || "No profile bio")}</p>
           </div>
         </div>
@@ -179,6 +313,9 @@ const search = synchronize(async (
 ) => {
   if (revision !== searchRevision) return;
 
+  const contextAnalysis = await contextAnalysisFor(context);
+  if (revision !== searchRevision) return;
+
   activeRequest = new AbortController();
   resultsSection.hidden = false;
   if (!candidateSelection.size) {
@@ -190,19 +327,30 @@ const search = synchronize(async (
     const response = await fetch("/api/find", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, context, continuation }),
+      body: JSON.stringify({
+        name,
+        context,
+        continuation,
+        contextInterpretation: contextAnalysis?.contextInterpretation,
+      }),
       signal: activeRequest.signal,
     });
     const body = await response.json() as {
       candidates?: Candidate[];
+      debugCandidates?: Candidate[];
       testedCount?: number;
       continuation?: string;
+      contextInterpretation?: ContextInterpretation;
+      bioMatchWeights?: { keyword: number; jev: number };
       error?: string;
     };
     if (!response.ok) throw new Error(body.error || "Search failed");
     if (revision !== searchRevision) return;
+    showContextInterpretation(body.contextInterpretation);
+    bioMatchWeights = body.bioMatchWeights;
     candidateSelection.upsert(body.candidates ?? []);
     totalTested += body.testedCount ?? 0;
+    void debugUi?.then((ui) => ui.addBatch(body.debugCandidates ?? [], totalTested));
     nextContinuation = body.continuation;
     if (!nextContinuation) pagingActive = false;
     searchToggle.hidden = !nextContinuation;
@@ -235,13 +383,16 @@ function scheduleSearch() {
   if (nextBatchTimer) clearTimeout(nextBatchTimer);
   nextContinuation = undefined;
   candidateSelection.reset();
+  void debugUi?.then((ui) => ui.reset());
   totalTested = 0;
+  bioMatchWeights = undefined;
   pagingActive = true;
   searchToggle.hidden = false;
   updateSearchToggle();
   const name = nameInput.value.trim();
   const context = contextInput.value.trim();
-  highlightTerms = getHighlightTerms(name, context);
+  nameHighlightTerms = tokenizeTerms(name).sort((left, right) => right.length - left.length);
+  contextHighlightTerms = tokenizeEnglishKeywords(context).sort((left, right) => right.length - left.length);
 
   if (name.length < 2) {
     resultsSection.hidden = true;
@@ -251,7 +402,7 @@ function scheduleSearch() {
     return;
   }
 
-  debounce(() => void search(revision, name, context), 150, debounceLock);
+  debounce(() => void search(revision, name, context), INPUT_DEBOUNCE_MS, debounceLock);
 }
 
 searchToggle.addEventListener("click", () => {
@@ -273,7 +424,7 @@ searchToggle.addEventListener("click", () => {
 results.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  if (target.closest("a")) return;
+  if (target.closest("a, details")) return;
   const card = target.closest<HTMLElement>("[data-candidate-did]");
   if (card?.dataset.candidateDid) toggleCandidateLock(card.dataset.candidateDid, true);
 });
@@ -287,5 +438,8 @@ results.addEventListener("keydown", (event) => {
 });
 
 nameInput.addEventListener("input", scheduleSearch);
-contextInput.addEventListener("input", scheduleSearch);
+contextInput.addEventListener("input", () => {
+  scheduleContextAnalysis();
+  scheduleSearch();
+});
 form.addEventListener("submit", (event) => event.preventDefault());
