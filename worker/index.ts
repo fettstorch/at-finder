@@ -1,5 +1,6 @@
 import { createContinuation, InvalidContinuationError, readContinuation } from "../src/continuation.js";
-import { parseFindRequest, RequestError } from "./request.js";
+import { classifyContext, contextStrategyWeights } from "../src/bio-match.js";
+import { parseContextRequest, parseFindRequest, RequestError } from "./request.js";
 export { SearchSession } from "./search-session.js";
 
 type RateLimit = {
@@ -40,13 +41,39 @@ function rateLimitKey(request: Request) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname !== "/api/find") return new Response(null, { status: 404 });
+    if (url.pathname !== "/api/find" && url.pathname !== "/api/context") {
+      return new Response(null, { status: 404 });
+    }
     if (request.method !== "POST") {
       return json(
         { error: "Method not allowed" },
         405,
         { Allow: "POST" },
       );
+    }
+
+    if (url.pathname === "/api/context") {
+      let input: Awaited<ReturnType<typeof parseContextRequest>>;
+      try {
+        input = await parseContextRequest(request);
+      } catch (error) {
+        if (error instanceof RequestError) return json({ error: error.message }, error.status);
+        return json({ error: "Request body could not be read." }, 400);
+      }
+      if (!env.TYPESAFE_API_KEY) return json({ error: "Service is not configured." }, 503);
+      const allowed = await env.SEARCH_RATE_LIMITER.limit({ key: rateLimitKey(request) });
+      if (!allowed.success) return json({ error: "Too many searches. Please wait before trying again." }, 429);
+      try {
+        const contextInterpretation = await classifyContext(input.context, env.TYPESAFE_API_KEY);
+        return json({
+          context: input.context,
+          contextInterpretation,
+          bioMatchWeights: contextStrategyWeights(contextInterpretation),
+        });
+      } catch (error) {
+        console.error("AT Finder context analysis failed", error instanceof Error ? error.message : "unknown error");
+        return json({ error: "Could not analyze context right now." }, 502);
+      }
     }
 
     let input: Awaited<ReturnType<typeof parseFindRequest>>;
@@ -72,6 +99,7 @@ export default {
 
     try {
       const normalizedInput = { name: input.name, context: input.context };
+      const sessionInput = { ...normalizedInput, contextInterpretation: input.contextInterpretation };
       const claims = input.continuation
         ? await readContinuation(input.continuation, normalizedInput, env.CONTINUATION_SECRET)
         : { sessionId: crypto.randomUUID(), sequence: 0 };
@@ -80,7 +108,7 @@ export default {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          input: normalizedInput,
+          input: sessionInput,
           sequence: claims.sequence,
           initialize: !input.continuation,
         }),
@@ -93,8 +121,11 @@ export default {
       }
       const page = await sessionResponse.json() as {
         candidates: unknown[];
+        debugCandidates?: unknown[];
         testedCount: number;
         hasMore: boolean;
+        contextInterpretation?: { keywordProbability: number; freeTextProbability: number };
+        bioMatchWeights?: { keyword: number; jev: number };
         sequence: number;
       };
       const continuation = page.hasMore
@@ -107,7 +138,10 @@ export default {
       return json({
         query: normalizedInput,
         candidates: page.candidates,
+        ...(import.meta.env?.DEV ? { debugCandidates: page.debugCandidates ?? [] } : {}),
         testedCount: page.testedCount,
+        contextInterpretation: page.contextInterpretation,
+        bioMatchWeights: page.bioMatchWeights,
         continuation,
       });
     } catch (error) {

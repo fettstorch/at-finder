@@ -1,11 +1,30 @@
 import { searchActorsPage, type BlueskyActor } from "./bluesky.js";
+import {
+  applyBioMatchStrategies,
+  answerProbability,
+  classifyContext,
+  contextStrategyWeights,
+  jevBioMatchStrategy,
+  keywordBioMatchStrategy,
+  type ContextInterpretation,
+  type WeightedBioMatchStrategy,
+} from "./bio-match.js";
 
-export type FindActorsInput = { name: string; context?: string };
+export { answerProbability };
+
+export type FindActorsInput = {
+  name: string;
+  context?: string;
+  contextInterpretation?: ContextInterpretation;
+};
 
 export type FindActorsPage = {
   candidates: ActorResult[];
+  scoredCandidates: ActorResult[];
   testedCount: number;
   hasMore: boolean;
+  contextInterpretation?: ContextInterpretation;
+  bioMatchWeights?: { keyword: number; jev: number };
 };
 
 export type ActorResult = BlueskyActor & {
@@ -13,6 +32,10 @@ export type ActorResult = BlueskyActor & {
   nameScore: number;
   contextSupportScore?: number;
   contextContradictionScore?: number;
+  bioMatchScores?: Record<string, {
+    supportScore?: number;
+    contradictionScore?: number;
+  }>;
   matchScore: number;
 };
 
@@ -24,6 +47,7 @@ export type SearchState = {
   name: string;
   context: string;
   searches: Array<{ query: string; cursor?: string; exhausted?: boolean }>;
+  contextInterpretation?: ContextInterpretation;
 };
 
 export type SeenActors = {
@@ -35,6 +59,16 @@ export type SeenActors = {
 type JevResponse = {
   answers: Record<string, { type: "noul"; noul: number }>;
 };
+
+function bioMatchStrategies(
+  interpretation: ContextInterpretation,
+): readonly WeightedBioMatchStrategy[] {
+  const weights = contextStrategyWeights(interpretation);
+  return [
+    { strategy: keywordBioMatchStrategy, weight: weights.keyword },
+    { strategy: jevBioMatchStrategy, weight: weights.jev },
+  ];
+}
 
 function nameQuestion(actor: BlueskyActor) {
   return {
@@ -53,75 +87,39 @@ function nameQuestion(actor: BlueskyActor) {
   };
 }
 
-function contextSupportQuestion(actor: BlueskyActor) {
-  return {
-    type: "noul",
-    instructions: {
-      candidate: {
-        bio: actor.description ?? "",
-      },
-      question: "Does this profile bio provide strong evidence supporting the supplied target context?",
-    },
-    criteria: {
-      true: "The bio contains strong, useful evidence for the target context.",
-      false: "The bio lacks strong supporting evidence or only matches a broad generic term.",
-    },
-  };
-}
-
-function contextContradictionQuestion(actor: BlueskyActor) {
-  return {
-    type: "noul",
-    instructions: {
-      candidate: {
-        bio: actor.description ?? "",
-      },
-      question: "Does this profile bio contradict the supplied target context?",
-    },
-    criteria: {
-      true: "The bio contains clear evidence that this is a different person or conflicts with the target context.",
-      false: "The bio is compatible with the target context, merely lacks evidence, or is empty.",
-    },
-  };
-}
-
 async function scoreCandidates(
   input: FindActorsInput,
   candidates: BlueskyActor[],
   apiKey: string,
+  interpretation?: ContextInterpretation,
 ) {
   const context = input.context?.trim();
 
   const nameQuestions = Object.fromEntries(
     candidates.map((candidate, index) => [`name_${index}`, nameQuestion(candidate)]),
   );
-  const contextQuestions = Object.fromEntries(
-    candidates.flatMap((candidate, index) => context && candidate.description?.trim() ? [
-      [`support_${index}`, contextSupportQuestion(candidate)],
-      [`contradiction_${index}`, contextContradictionQuestion(candidate)],
-    ] : []),
-  );
 
-  const [nameAnswers, contextAnswers] = await Promise.all([
+  const [nameAnswers, bioMatches] = await Promise.all([
     askJev(apiKey, { targetName: input.name }, nameQuestions),
-    context && Object.keys(contextQuestions).length
-      ? askJev(apiKey, { targetContext: context }, contextQuestions)
-      : Promise.resolve({ answers: {} } as JevResponse),
+    context
+      ? applyBioMatchStrategies(
+          bioMatchStrategies(interpretation ?? { keywordProbability: 0.5, freeTextProbability: 0.5 }),
+          context,
+          candidates,
+          apiKey,
+        )
+      : Promise.resolve(undefined),
   ]);
 
-  const body: JevResponse = {
-    answers: { ...nameAnswers.answers, ...contextAnswers.answers },
-  };
-
   return candidates.map((candidate, index) => {
-    const nameProbability = answerProbability(body, `name_${index}`);
-    const hasBio = Boolean(candidate.description?.trim());
-    const supportProbability = context && hasBio
-      ? answerProbability(body, `support_${index}`)
-      : context ? 0 : undefined;
-    const contradictionProbability = context && hasBio
-      ? answerProbability(body, `contradiction_${index}`)
-      : context ? 1 : undefined;
+    const nameProbability = answerProbability(nameAnswers, `name_${index}`);
+    const bioMatch = context ? bioMatches?.get(candidate.did) : undefined;
+    const supportProbability = context
+      ? bioMatch?.support ?? 0
+      : undefined;
+    const contradictionProbability = context
+      ? bioMatch?.contradiction ?? 1
+      : undefined;
     const probability = supportProbability === undefined
       ? nameProbability
       : Math.max(nameProbability, supportProbability)
@@ -135,9 +133,17 @@ async function scoreCandidates(
       contextContradictionScore: contradictionProbability === undefined
         ? undefined
         : toScore(contradictionProbability),
+      bioMatchScores: bioMatch
+        ? Object.fromEntries(Object.entries(bioMatch.strategies).map(([name, scores]) => [name, {
+            supportScore: scores.support === undefined ? undefined : toScore(scores.support),
+            contradictionScore: scores.contradiction === undefined
+              ? undefined
+              : toScore(scores.contradiction),
+          }]))
+        : undefined,
       matchScore: toScore(probability),
     };
-  }).sort((a, b) => b.matchScore - a.matchScore).slice(0, MAX_RESULTS);
+  }).sort((a, b) => b.matchScore - a.matchScore);
 }
 
 async function askJev(
@@ -163,14 +169,6 @@ async function askJev(
   return (await response.json()) as JevResponse;
 }
 
-export function answerProbability(body: JevResponse, key: string) {
-  const probability = body.answers[key]?.noul;
-  if (typeof probability !== "number" || probability < 0 || probability > 1) {
-    throw new Error(`Jev returned an invalid answer for ${key}`);
-  }
-  return probability;
-}
-
 export function toScore(probability: number) {
   return Math.round(probability * 100) / 10;
 }
@@ -194,6 +192,7 @@ export function createSearchState(input: FindActorsInput): SearchState {
     name: input.name,
     context: input.context ?? "",
     searches: createQueries(input).map((query) => ({ query })),
+    contextInterpretation: input.contextInterpretation,
   };
 }
 
@@ -251,13 +250,29 @@ export async function findActors(
   seen: SeenActors,
   apiKey: string,
 ): Promise<FindActorsPage> {
-  const candidates = await nextCandidateBatch(state, seen);
+  const context = input.context?.trim();
+  const [candidates, contextInterpretation] = await Promise.all([
+    nextCandidateBatch(state, seen),
+    context && !state.contextInterpretation
+      ? classifyContext(context, apiKey)
+      : Promise.resolve(state.contextInterpretation),
+  ]);
+  if (contextInterpretation) state.contextInterpretation = contextInterpretation;
   const hasMore = seen.size() < MAX_CANDIDATES_PER_SEARCH
     && state.searches.some((search) => !search.exhausted);
 
+  const scoredCandidates = candidates.length
+    ? await scoreCandidates(input, candidates, apiKey, contextInterpretation)
+    : [];
+
   return {
-    candidates: candidates.length ? await scoreCandidates(input, candidates, apiKey) : [],
+    candidates: scoredCandidates.slice(0, MAX_RESULTS),
+    scoredCandidates,
     testedCount: candidates.length,
     hasMore,
+    contextInterpretation,
+    bioMatchWeights: contextInterpretation
+      ? contextStrategyWeights(contextInterpretation)
+      : undefined,
   };
 }

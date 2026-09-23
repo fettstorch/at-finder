@@ -17,6 +17,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function parseContextInterpretation(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new RequestError("Context interpretation is invalid.", 400);
+  const allowedKeys = new Set(["keywordProbability", "freeTextProbability"]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+    throw new RequestError("Context interpretation is invalid.", 400);
+  }
+  const keywordProbability = value.keywordProbability;
+  const freeTextProbability = value.freeTextProbability;
+  if (
+    typeof keywordProbability !== "number"
+    || typeof freeTextProbability !== "number"
+    || !Number.isFinite(keywordProbability)
+    || !Number.isFinite(freeTextProbability)
+    || keywordProbability < 0
+    || keywordProbability > 1
+    || freeTextProbability < 0
+    || freeTextProbability > 1
+    || Math.abs(keywordProbability + freeTextProbability - 1) > 0.000_001
+  ) throw new RequestError("Context interpretation is invalid.", 400);
+  return { keywordProbability, freeTextProbability };
+}
+
 async function readLimitedText(request: Request) {
   const declaredLength = request.headers.get("content-length");
   if (declaredLength && Number(declaredLength) > MAX_BODY_BYTES) {
@@ -68,7 +91,7 @@ export async function parseFindRequest(request: Request) {
     throw new RequestError("Request body must be valid JSON.", 400);
   }
   if (!isPlainObject(body)) throw new RequestError("Request body must be a JSON object.", 400);
-  const allowedKeys = new Set(["name", "context", "continuation"]);
+  const allowedKeys = new Set(["name", "context", "continuation", "contextInterpretation"]);
   if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
     throw new RequestError("Request contains unsupported fields.", 400);
   }
@@ -87,5 +110,39 @@ export async function parseFindRequest(request: Request) {
     && (typeof continuation !== "string" || !continuation || continuation.length > MAX_CONTINUATION_LENGTH)
   ) throw new RequestError("Continuation token is invalid.", 400);
 
-  return { name, context, continuation: continuation as string | undefined };
+  const contextInterpretation = parseContextInterpretation(body.contextInterpretation);
+  if (!context && contextInterpretation) {
+    throw new RequestError("Context interpretation requires context.", 400);
+  }
+  return {
+    name,
+    context,
+    continuation: continuation as string | undefined,
+    ...(contextInterpretation ? { contextInterpretation } : {}),
+  };
+}
+
+
+export async function parseContextRequest(request: Request) {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new RequestError("Content-Type must be application/json.", 415);
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(await readLimitedText(request));
+  } catch (error) {
+    if (error instanceof RequestError) throw error;
+    throw new RequestError("Request body must be valid JSON.", 400);
+  }
+  if (!isPlainObject(body) || Object.keys(body).some((key) => key !== "context")) {
+    throw new RequestError("Request contains unsupported fields.", 400);
+  }
+  const context = typeof body.context === "string" ? body.context.trim() : "";
+  if (
+    !context
+    || context.length > MAX_CONTEXT_LENGTH
+    || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(context)
+  ) throw new RequestError("Provide valid context (max 1000 characters).", 400);
+  return { context };
 }

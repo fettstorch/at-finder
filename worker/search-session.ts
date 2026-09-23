@@ -200,8 +200,11 @@ export class SearchSession {
 
     return Response.json({
       candidates: page.candidates,
+      ...(import.meta.env?.DEV ? { debugCandidates: page.scoredCandidates } : {}),
       testedCount: page.testedCount,
       hasMore: page.hasMore,
+      contextInterpretation: page.contextInterpretation,
+      bioMatchWeights: page.bioMatchWeights,
       sequence: session.sequence,
     });
   }
