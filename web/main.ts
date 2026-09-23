@@ -140,7 +140,8 @@ const analyzeContext = synchronize(async (
       contextInterpretation.hidden = false;
       contextInterpretation.textContent = "Context analysis failed";
     }
-    throw error;
+    // The search endpoint can classify context itself if the early request fails.
+    return undefined;
   } finally {
     if (revision === contextRevision) activeContextRequest = undefined;
   }
@@ -160,10 +161,8 @@ function scheduleContextAnalysis() {
   }
   showContextInterpretation();
   let resolveAnalysis!: (value: ContextAnalysis | undefined) => void;
-  let rejectAnalysis!: (reason?: unknown) => void;
-  const promise = new Promise<ContextAnalysis | undefined>((resolve, reject) => {
+  const promise = new Promise<ContextAnalysis | undefined>((resolve) => {
     resolveAnalysis = resolve;
-    rejectAnalysis = reject;
   });
   resolvePendingContext = resolveAnalysis;
   currentContextAnalysis = { context, promise };
@@ -171,8 +170,8 @@ function scheduleContextAnalysis() {
     () => void (async () => {
       try {
         resolveAnalysis(await analyzeContext(revision, context));
-      } catch (error) {
-        rejectAnalysis(error);
+      } catch {
+        resolveAnalysis(undefined);
       } finally {
         if (revision === contextRevision) resolvePendingContext = undefined;
       }
@@ -313,9 +312,6 @@ const search = synchronize(async (
 ) => {
   if (revision !== searchRevision) return;
 
-  const contextAnalysis = await contextAnalysisFor(context);
-  if (revision !== searchRevision) return;
-
   activeRequest = new AbortController();
   resultsSection.hidden = false;
   if (!candidateSelection.size) {
@@ -324,6 +320,9 @@ const search = synchronize(async (
   if (!totalTested) resultCount.textContent = "";
 
   try {
+    const contextAnalysis = await contextAnalysisFor(context);
+    if (revision !== searchRevision) return;
+
     const response = await fetch("/api/find", {
       method: "POST",
       headers: { "content-type": "application/json" },
