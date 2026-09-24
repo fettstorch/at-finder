@@ -71,7 +71,7 @@ export default {
           bioMatchWeights: contextStrategyWeights(contextInterpretation),
         });
       } catch (error) {
-        console.error("AT Finder context analysis failed", error instanceof Error ? error.message : "unknown error");
+        console.error("What’s Their @? context analysis failed", error instanceof Error ? error.message : "unknown error");
         return json({ error: "Could not analyze context right now." }, 502);
       }
     }
@@ -148,7 +148,7 @@ export default {
       if (error instanceof InvalidContinuationError) {
         return json({ error: "Continuation token is invalid or expired." }, 400);
       }
-      console.error("AT Finder search failed", error instanceof Error ? error.message : "unknown error");
+      console.error("What’s Their @? search failed", error instanceof Error ? error.message : "unknown error");
       return json({ error: "Could not search AT Protocol right now." }, 502);
     }
   },

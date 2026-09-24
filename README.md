@@ -1,6 +1,6 @@
-# AT Finder
+# What’s Their @?
 
-AT Finder is a small public website for finding likely AT Protocol accounts from a person's name and optional context. It searches real public actor profiles and uses a bounded Jev scoring pass to rerank only those observed candidates. The model cannot add accounts, handles, or DIDs to the result set.
+What’s Their @? is a small public website for finding likely AT Protocol accounts from a person's name and optional context. It searches real public actor profiles and uses a bounded Jev scoring pass to rerank only those observed candidates. The model cannot add accounts, handles, or DIDs to the result set.
 
 ## How it works
 
@@ -78,7 +78,7 @@ Before the first deployment:
 
 Cloudflare applies rate-limit counters per location and documents them as permissive/eventually consistent. For a higher-risk or high-volume launch, add a zone-level WAF rate-limiting rule and bot protection in the Cloudflare dashboard as an additional perimeter. The repository does not claim an in-memory isolate counter as protection.
 
-A canonical URL, custom domain, and social preview image are intentionally not configured until the final public domain is known. Update the HTML metadata when that domain is chosen.
+The canonical public URL is `https://whatstheir.at/`. Attach that hostname to the production Worker before launch. A social preview image is not yet configured.
 
 ## Privacy and security
 
