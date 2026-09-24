@@ -8,11 +8,6 @@ export type CandidateView<T> = {
   rotating: T[];
 };
 
-/** Keys that activate the card's button-like lock interaction. */
-export function isCandidateToggleKey(key: string) {
-  return key === "Enter" || key === " " || key === "Spacebar";
-}
-
 /**
  * Tracks candidates and lock order for one search. Locked candidates remain in
  * insertion order and do not consume slots from the rotating ranked results.

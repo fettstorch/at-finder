@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CandidateSelection, isCandidateToggleKey } from "../web/candidate-selection.js";
+import { CandidateSelection } from "../web/candidate-selection.js";
 
 type Candidate = { did: string; matchScore: number };
 const candidate = (did: string, matchScore: number): Candidate => ({ did, matchScore });
@@ -45,12 +45,4 @@ test("unlock returns a candidate to ranking and reset clears all search state", 
   selection.reset();
   assert.deepEqual(selection.view(), { locked: [], rotating: [] });
   assert.equal(selection.size, 0);
-});
-
-test("card keyboard activation accepts Enter and Space only", () => {
-  assert.equal(isCandidateToggleKey("Enter"), true);
-  assert.equal(isCandidateToggleKey(" "), true);
-  assert.equal(isCandidateToggleKey("Spacebar"), true);
-  assert.equal(isCandidateToggleKey("Tab"), false);
-  assert.equal(isCandidateToggleKey("ArrowDown"), false);
 });

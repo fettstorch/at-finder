@@ -26,6 +26,7 @@
     </script>
   </head>
   <body>
+    <a class="skip-link" href="#search-form">Skip to search</a>
     <main class="page-shell">
       <header class="hero">
         <div class="brand-mark"><img src="/favicon.png" alt=""></div>
@@ -38,16 +39,28 @@
 
       <section class="search-panel" aria-labelledby="search-heading">
         <h2 id="search-heading" class="sr-only">Search for an AT Protocol account</h2>
-        <form id="search-form" autocomplete="off">
+        <form id="search-form" autocomplete="off" role="search" aria-labelledby="search-heading">
           <div class="field">
-            <label for="person-name">Person’s name</label>
-            <input id="person-name" name="person_query" type="text" required maxlength="200"
-              autocomplete="off" data-1p-ignore data-lpignore="true" placeholder="e.g. Jane Smith">
+            <div class="field-label-row">
+              <label for="person-name">Person’s name</label>
+              <span class="field-help">
+                <button type="button" aria-label="About the person’s name field" aria-describedby="person-name-help">?</button>
+                <span id="person-name-help" class="field-tooltip" role="tooltip">Enter the person’s name or handle. Using only the beginning can work better when their full name doesn’t appear in both their display name and handle.</span>
+              </span>
+            </div>
+            <input id="person-name" name="person_query" type="text" required maxlength="200" aria-describedby="person-name-help"
+              autocomplete="off" data-1p-ignore data-lpignore="true" placeholder="e.g. zoe">
           </div>
           <div class="field context-field">
-            <label for="person-context">Context <span>optional</span></label>
-            <input id="person-context" name="context_notes" type="text" maxlength="1000" autocomplete="off"
-              data-1p-ignore data-lpignore="true" placeholder="Role, company, location, topic…">
+            <div class="field-label-row">
+              <label for="person-context">Context <span>optional keywords or description</span></label>
+              <span class="field-help">
+                <button type="button" aria-label="About the context field" aria-describedby="person-context-help">?</button>
+                <span id="person-context-help" class="field-tooltip" role="tooltip">This input is matched against candidate profile bios. Enter keywords or describe what they might write in their bio. Don’t describe their visual appearance here.</span>
+              </span>
+            </div>
+            <input id="person-context" name="context_notes" type="text" maxlength="1000" autocomplete="off" aria-describedby="person-context-help"
+              data-1p-ignore data-lpignore="true" placeholder="e.g. streams on stream.place">
             <p id="context-interpretation" class="context-interpretation" role="status" aria-live="polite" hidden></p>
           </div>
         </form>
@@ -55,13 +68,19 @@
 
       <section id="results-section" class="results-section" hidden>
         <div class="results-heading">
-          <div>
+          <div class="results-summary">
             <p class="eyebrow">Candidates</p>
-            <h2 id="matches-heading" tabindex="-1">Possible matches</h2>
-          </div>
-          <div class="results-actions">
-            <p id="result-count" class="result-count" role="status" aria-live="polite" aria-atomic="true"></p>
-            <button id="search-toggle" type="button" aria-label="Pause search" title="Pause search" hidden>⏸</button>
+            <div class="results-title-row">
+              <h2 id="matches-heading" tabindex="-1">Possible matches</h2>
+              <span id="search-spinner" class="search-spinner" aria-hidden="true">🌀</span>
+              <button id="search-toggle" type="button" aria-label="Pause search" title="Pause search" hidden>Pause</button>
+              <button id="score-details-toggle" class="score-details-toggle" type="button" aria-pressed="true" aria-label="Hide score details" title="Hide score details" hidden>
+                <span>Score details</span>
+                <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+              </button>
+            </div>
+            <p id="result-count" class="result-count"></p>
+            <p id="search-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
           </div>
         </div>
         <div id="results" class="results"></div>
@@ -70,9 +89,9 @@
     <footer class="site-footer">
       <div class="footer-meta">
         <span>v%APP_VERSION%</span>
-        <span>Made by <a href="https://bsky.app/profile/fettstorch.dev" target="_blank" rel="noreferrer">@fettstorch.dev</a></span>
+        <span>Made by <a href="https://bsky.app/profile/fettstorch.dev" target="_blank" rel="noreferrer" aria-label="@fettstorch.dev on Bluesky (opens in a new tab)">@fettstorch.dev</a></span>
       </div>
-      <p class="privacy-note">Your name and optional context are processed by this Cloudflare-hosted service, which temporarily stores search progress. Public AT Protocol search receives derived name queries, and Jev receives candidate profile fields plus your search input to score likely matches. Do not enter sensitive information.</p>
+      <p class="privacy-note">No account is required, and AT Finder has no saved-search history. While a search is active, its Cloudflare session stores the entered name and context, search cursors, and identifiers of profiles already checked. Active session storage is cleared when the search finishes or after 15 minutes without activity. The entered name and variants derived from it are sent to Bluesky search. Jev receives the entered name or context plus the relevant public profile handle, display name, or bio for scoring.</p>
     </footer>
     <script type="module" src="/web/main.ts"></script>
   </body>
