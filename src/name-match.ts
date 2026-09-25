@@ -25,11 +25,11 @@ function nameLetters(word: string) {
  */
 export function deriveNamePrefix(word: string): string | undefined {
   const letters = nameLetters(word);
-  if (letters.length < 5) return undefined;
+  if (letters.length < 4) return undefined;
 
   const firstVowel = [...letters].findIndex((character) => /[aeiouy]/u.test(character));
-  const syllableEnd = firstVowel < 0 ? 3 : firstVowel + 1;
-  const prefixLength = Math.max(3, syllableEnd);
+  if (firstVowel <= 0) return undefined;
+  const prefixLength = firstVowel + 1;
   if (prefixLength >= letters.length - 1 || prefixLength > Math.floor(letters.length * 0.6)) {
     return undefined;
   }

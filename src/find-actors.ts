@@ -189,7 +189,7 @@ export function toScore(probability: number) {
 
 export function createQueries(input: FindActorsInput) {
   const searchName = effectiveName(input);
-  const nameParts = searchName.split(/\s+/).filter((part) => part.length >= 3);
+  const nameParts = searchName.split(/\s+/).filter((part) => part.length >= 2);
   const queries = [
     searchName,
     ...nameParts,

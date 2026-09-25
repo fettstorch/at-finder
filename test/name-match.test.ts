@@ -10,10 +10,13 @@ import {
 
 test("derives conservative first-syllable-like prefixes", () => {
   assert.equal(deriveNamePrefix("Florian"), "flo");
+  assert.equal(deriveNamePrefix("Rudy"), "ru");
+  assert.equal(deriveNamePrefix("Rude"), "ru");
+  assert.equal(deriveNamePrefix("Alice"), undefined);
   assert.equal(deriveNamePrefix("flo"), undefined);
   assert.deepEqual(createNameAbbreviationProposals("Florian Lovelace"), [
     { word: "Florian", abbreviation: "flo" },
-    { word: "Lovelace", abbreviation: "lov" },
+    { word: "Lovelace", abbreviation: "lo" },
   ]);
   assert.deepEqual(createNameAbbreviationProposals("Florian flo"), []);
 });
