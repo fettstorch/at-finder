@@ -50,6 +50,7 @@ const SEARCH_EXAMPLES = [
   { name: "brooke", context: "created a platform for blogging" },
   { name: "sam", context: "has a cool dev blog" },
   { name: "julian", context: "works on mustardnotes and has a cute dog" },
+  { name: "rudy", context: "made blacksky" },
 ] as const;
 let searchRevision = 0;
 let contextRevision = 0;
