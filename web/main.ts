@@ -325,7 +325,6 @@ function renderCandidate(candidate: Candidate, locked: boolean) {
                 <a href="${escapeHtml(candidate.profileUrl)}" target="_blank" rel="noreferrer" aria-label="@${escapeHtml(candidate.handle)} on Bluesky (opens in a new tab)">@${highlightText(candidate.handle)}</a>
               </div>
               <div class="profile-controls">
-                <button class="candidate-lock-toggle" type="button" aria-pressed="${locked}" aria-label="${locked ? "Unlock" : "Lock"} ${escapeHtml(candidateName)}">${locked ? "Unlock" : "Lock"}</button>
                 <div class="score" style="--score-color:${meterColor(score)}">
                   <strong>${score.toFixed(1)}</strong><span>/10</span>
                 </div>
@@ -352,7 +351,7 @@ function renderCandidateResults() {
   const focusedDid = focusedElement?.closest<HTMLElement>("[data-candidate-did]")?.dataset.candidateDid;
   const focusedKind = focusedElement?.matches("a")
     ? "profile"
-    : focusedElement?.matches(".candidate-lock-toggle") ? "lock" : undefined;
+    : undefined;
   const { locked, rotating } = candidateSelection.view(10);
   scoreDetailsToggle.hidden = !locked.length && !rotating.length;
   updateResultCount(rotating.length, locked.length, totalTested);
@@ -533,15 +532,9 @@ scoreDetailsToggle.addEventListener("click", () => {
 results.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const lockToggle = target.closest<HTMLButtonElement>(".candidate-lock-toggle");
-  if (lockToggle) {
-    const card = lockToggle.closest<HTMLElement>("[data-candidate-did]");
-    if (card?.dataset.candidateDid) toggleCandidateLock(card.dataset.candidateDid, true);
-    return;
-  }
   if (target.closest("a, button")) return;
   const card = target.closest<HTMLElement>("[data-candidate-did]");
-  if (card?.dataset.candidateDid) toggleCandidateLock(card.dataset.candidateDid, true);
+  if (card?.dataset.candidateDid) toggleCandidateLock(card.dataset.candidateDid);
 });
 
 nameInput.addEventListener("input", scheduleSearch);
