@@ -94,10 +94,11 @@ input:focus { border-color: #6b8ee9; background: #fff; box-shadow: 0 0 0 4px #37
 .avatar-fallback { display: grid; place-items: center; color: #5975bd; font: 700 28px inherit; }
 .profile-copy { min-width: 0; flex: 1; }
 .profile-title { display: flex; justify-content: space-between; gap: 18px; }
+.profile-title > :first-child { min-width: 0; }
 .profile-title h3 { overflow: hidden; font-size: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-title a { display: inline-block; margin-top: 3px; color: #315fd5; font-size: 14px; text-decoration: none; }
 .profile-title a:hover { text-decoration: underline; }
-.profile-controls { display: flex; align-items: center; align-self: start; gap: 7px; }
+.profile-controls { display: flex; flex: none; align-items: center; align-self: start; gap: 7px; }
 .score { display: flex; align-items: baseline; border-radius: 999px; padding: 7px 11px; background: color-mix(in srgb, var(--score-color) 22%, white); color: #27314b; white-space: nowrap; }
 .score strong { font-size: 17px; }.score span { color: #747f96; font-size: 12px; }
 .metrics-details { margin-top: 12px; }
