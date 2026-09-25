@@ -6,6 +6,10 @@
 .debug-heading strong { font-size: 14px; }
 .debug-heading label { display: grid; gap: 4px; color: #667189; font-size: 10px; font-weight: 700; }
 .debug-heading input { width: min(280px, 38vw); height: 34px; padding: 7px 10px; border-radius: 9px; font-size: 12px; }
+.debug-queries { display: grid; gap: 5px; margin-top: 10px; }
+.debug-queries > span { color: #7890c5; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.debug-queries > p { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; color: #788298; font-size: 11px; }
+.debug-queries code { border: 1px solid #d7def0; border-radius: 999px; background: #fff; color: #40547f; padding: 3px 7px; font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .debug-output { margin-top: 10px; }
 .debug-output > p { margin: 0; color: #788298; font-size: 11px; }
 .debug-candidate { display: flex; gap: 12px; padding: 12px; border: 1px solid #dfe5f1; border-radius: 13px; background: #fff; }

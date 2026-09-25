@@ -200,7 +200,10 @@ export class SearchSession {
 
     return Response.json({
       candidates: page.candidates,
-      ...(import.meta.env?.DEV ? { debugCandidates: page.scoredCandidates } : {}),
+      ...(import.meta.env?.DEV ? {
+        debugCandidates: page.scoredCandidates,
+        debugQueries: session.search.searches.map(({ query }) => query),
+      } : {}),
       testedCount: page.testedCount,
       hasMore: page.hasMore,
       contextInterpretation: page.contextInterpretation,

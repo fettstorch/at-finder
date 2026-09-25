@@ -146,6 +146,7 @@ export default {
       const page = await sessionResponse.json() as {
         candidates: unknown[];
         debugCandidates?: unknown[];
+        debugQueries?: string[];
         testedCount: number;
         hasMore: boolean;
         contextInterpretation?: { keywordProbability: number; freeTextProbability: number };
@@ -163,7 +164,10 @@ export default {
       return json({
         query: normalizedInput,
         candidates: page.candidates,
-        ...(import.meta.env?.DEV ? { debugCandidates: page.debugCandidates ?? [] } : {}),
+        ...(import.meta.env?.DEV ? {
+          debugCandidates: page.debugCandidates ?? [],
+          debugQueries: page.debugQueries ?? [],
+        } : {}),
         testedCount: page.testedCount,
         contextInterpretation: page.contextInterpretation,
         bioMatchWeights: page.bioMatchWeights,

@@ -532,6 +532,7 @@ const search = synchronize(async (
     const body = await response.json() as {
       candidates?: Candidate[];
       debugCandidates?: Candidate[];
+      debugQueries?: string[];
       testedCount?: number;
       continuation?: string;
       contextInterpretation?: ContextInterpretation;
@@ -546,7 +547,10 @@ const search = synchronize(async (
     bioMatchWeights = body.bioMatchWeights;
     candidateSelection.upsert(body.candidates ?? []);
     totalTested += body.testedCount ?? 0;
-    void debugUi?.then((ui) => ui.addBatch(body.debugCandidates ?? [], totalTested));
+    void debugUi?.then((ui) => {
+      ui.setQueries(body.debugQueries ?? []);
+      ui.addBatch(body.debugCandidates ?? [], totalTested);
+    });
     nextContinuation = body.continuation;
     if (!nextContinuation) pagingActive = false;
     if (!nextContinuation) searchStatus.textContent = `Search complete. ${totalTested} candidates checked.`;

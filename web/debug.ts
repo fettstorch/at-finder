@@ -42,10 +42,12 @@ export function createDebugUi(anchor: HTMLElement) {
       <div><span>Vite dev diagnostic</span><strong>Track an expected account</strong></div>
       <label>Target handle <input type="text" autocomplete="off" spellcheck="false" placeholder="@handle.example"></label>
     </div>
+    <div class="debug-queries"><span>Active queries</span><p>Waiting for a search…</p></div>
     <div class="debug-output"><p>Enter a handle to see its scores as soon as a raw batch contains it.</p></div>`;
   anchor.insertAdjacentElement("afterend", panel);
 
   const input = panel.querySelector<HTMLInputElement>("input")!;
+  const queriesOutput = panel.querySelector<HTMLElement>(".debug-queries p")!;
   const output = panel.querySelector<HTMLElement>(".debug-output")!;
   const seen = new Map<string, { candidate: Candidate; testedCount: number }>();
   let testedCount = 0;
@@ -84,6 +86,11 @@ export function createDebugUi(anchor: HTMLElement) {
   input.addEventListener("input", render);
 
   return {
+    setQueries(queries: string[]) {
+      queriesOutput.innerHTML = queries.length
+        ? queries.map((query) => `<code>${escapeHtml(query)}</code>`).join("")
+        : "No active queries";
+    },
     addBatch(candidates: Candidate[], inspectedCount: number) {
       testedCount = inspectedCount;
       for (const candidate of candidates) {
@@ -95,6 +102,7 @@ export function createDebugUi(anchor: HTMLElement) {
     reset() {
       seen.clear();
       testedCount = 0;
+      queriesOutput.textContent = "Waiting for a search…";
       render();
     },
   };
