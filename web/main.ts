@@ -1,6 +1,7 @@
 import "./styles.css";
 import { debounce, synchronize } from "@fettstorch/jule";
 import { tokenizeEnglishKeywords, tokenizeTerms } from "../src/english-stopwords.js";
+import type { NameAnalysis } from "../src/name-match.js";
 import { CandidateSelection } from "./candidate-selection.js";
 import { nextBatchDelay } from "./pacing.js";
 
@@ -24,6 +25,7 @@ export type Candidate = {
 const form = document.querySelector<HTMLFormElement>("#search-form")!;
 const nameInput = document.querySelector<HTMLInputElement>("#person-name")!;
 const contextInput = document.querySelector<HTMLInputElement>("#person-context")!;
+const nameInterpretation = document.querySelector<HTMLElement>("#name-interpretation")!;
 const contextInterpretation = document.querySelector<HTMLElement>("#context-interpretation")!;
 const resultsSection = document.querySelector<HTMLElement>("#results-section")!;
 const results = document.querySelector<HTMLElement>("#results")!;
@@ -36,12 +38,24 @@ const debounceLock = {};
 const searchLock = {};
 const contextDebounceLock = {};
 const contextLock = {};
+const nameDebounceLock = {};
+const nameLock = {};
 const INPUT_DEBOUNCE_MS = 300;
 const CANDIDATE_COUNT_ANIMATION_MS = 1_800;
+const SEARCH_EXAMPLES = [
+  { name: "zoe", context: "streams on stream.place" },
+  { name: "alex", context: "developer does something with void" },
+  { name: "florian", context: "the guy that made blento" },
+  { name: "eli", context: "the guy from stream.place" },
+  { name: "brooke", context: "created a platform for blogging" },
+  { name: "sam", context: "has a cool dev blog" },
+] as const;
 let searchRevision = 0;
 let contextRevision = 0;
+let nameRevision = 0;
 let activeRequest: AbortController | undefined;
 let activeContextRequest: AbortController | undefined;
+let activeNameRequest: AbortController | undefined;
 let nextContinuation: string | undefined;
 let pagingActive = false;
 let nextBatchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -58,14 +72,21 @@ type ContextAnalysis = {
   contextInterpretation: ContextInterpretation;
   bioMatchWeights: { keyword: number; jev: number };
 };
+type NameAnalysisResponse = NameAnalysis;
 let currentContextAnalysis: { context: string; promise: Promise<ContextAnalysis | undefined> } | undefined;
+let currentNameAnalysis: { name: string; promise: Promise<NameAnalysis | undefined> } | undefined;
 let resolvePendingContext: ((value: ContextAnalysis | undefined) => void) | undefined;
+let resolvePendingName: ((value: NameAnalysis | undefined) => void) | undefined;
 const candidateSelection = new CandidateSelection<Candidate>();
 const debugUi = import.meta.env?.DEV
   ? import("./debug.js").then(({ createDebugUi }) => createDebugUi(
       document.querySelector<HTMLElement>(".search-panel")!,
     ))
   : undefined;
+
+const placeholderExample = SEARCH_EXAMPLES[Math.floor(Math.random() * SEARCH_EXAMPLES.length)];
+nameInput.placeholder = `e.g. ${placeholderExample.name}`;
+contextInput.placeholder = `e.g. ${placeholderExample.context}`;
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -204,6 +225,89 @@ function showContextInterpretation(
       ? "Keywords"
       : "Description"
     : "Reading context…";
+}
+
+function showNameInterpretation(analysis?: NameAnalysis, failed = false) {
+  const name = nameInput.value.trim();
+  if (!name) {
+    nameInterpretation.hidden = true;
+    nameInterpretation.textContent = "";
+    return;
+  }
+  nameInterpretation.hidden = false;
+  nameInterpretation.textContent = failed
+    ? "Name enrichment unavailable"
+    : analysis
+      ? analysis.abbreviations.length
+        ? `Adding: ${analysis.abbreviations.join(", ")}`
+        : "No name enrichment needed"
+      : "Reading name…";
+}
+
+const analyzeName = synchronize(async (
+  revision: number,
+  name: string,
+): Promise<NameAnalysis | undefined> => {
+  if (revision !== nameRevision) return undefined;
+  activeNameRequest = new AbortController();
+  try {
+    const response = await fetch("/api/name", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+      signal: activeNameRequest.signal,
+    });
+    const body = await response.json() as NameAnalysisResponse & { error?: string };
+    if (!response.ok) throw new Error(body.error || "Name analysis failed");
+    if (revision !== nameRevision) return undefined;
+    showNameInterpretation(body);
+    return body;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return undefined;
+    if (revision === nameRevision) showNameInterpretation(undefined, true);
+    return undefined;
+  } finally {
+    if (revision === nameRevision) activeNameRequest = undefined;
+  }
+}, nameLock);
+
+function scheduleNameAnalysis() {
+  const revision = ++nameRevision;
+  activeNameRequest?.abort();
+  resolvePendingName?.(undefined);
+  resolvePendingName = undefined;
+  const name = nameInput.value.trim();
+  if (!name) {
+    showNameInterpretation();
+    currentNameAnalysis = { name, promise: Promise.resolve(undefined) };
+    return;
+  }
+  showNameInterpretation();
+  let resolveAnalysis!: (value: NameAnalysis | undefined) => void;
+  const promise = new Promise<NameAnalysis | undefined>((resolve) => {
+    resolveAnalysis = resolve;
+  });
+  resolvePendingName = resolveAnalysis;
+  currentNameAnalysis = { name, promise };
+  debounce(
+    () => void (async () => {
+      try {
+        resolveAnalysis(await analyzeName(revision, name));
+      } catch {
+        resolveAnalysis(undefined);
+      } finally {
+        if (revision === nameRevision) resolvePendingName = undefined;
+      }
+    })(),
+    INPUT_DEBOUNCE_MS,
+    nameDebounceLock,
+  );
+}
+
+function nameAnalysisFor(name: string) {
+  if (currentNameAnalysis?.name === name) return currentNameAnalysis.promise;
+  scheduleNameAnalysis();
+  return currentNameAnalysis?.promise ?? Promise.resolve(undefined);
 }
 
 const analyzeContext = synchronize(async (
@@ -374,23 +478,20 @@ function renderCandidateResults() {
       <div class="candidate-list">${rotating.map((candidate) => renderCandidate(candidate, false)).join("")}</div>
     </section>` : "";
   results.innerHTML = lockedSection + rotatingSection;
-  if (focusedDid && focusedKind) focusCandidateControl(focusedDid, focusedKind);
+  if (focusedDid && focusedKind) focusCandidateControl(focusedDid);
 }
 
-function focusCandidateControl(did: string, kind: "lock" | "profile" = "lock") {
+function focusCandidateControl(did: string) {
   const card = [...results.querySelectorAll<HTMLElement>("[data-candidate-did]")]
     .find((candidateCard) => candidateCard.dataset.candidateDid === did);
-  const control = kind === "profile"
-    ? card?.querySelector<HTMLAnchorElement>("a")
-    : card?.querySelector<HTMLButtonElement>(".candidate-lock-toggle");
+  const control = card?.querySelector<HTMLAnchorElement>("a");
   if (control) control.focus();
   else document.querySelector<HTMLElement>("#matches-heading")?.focus();
 }
 
-function toggleCandidateLock(did: string, restoreFocus = false) {
+function toggleCandidateLock(did: string) {
   candidateSelection.toggle(did);
   renderCandidateResults();
-  if (restoreFocus) focusCandidateControl(did);
 }
 
 const search = synchronize(async (
@@ -410,7 +511,10 @@ const search = synchronize(async (
   if (!totalTested) resultCount.textContent = "";
 
   try {
-    const contextAnalysis = await contextAnalysisFor(context);
+    const [nameAnalysis, contextAnalysis] = await Promise.all([
+      nameAnalysisFor(name),
+      contextAnalysisFor(context),
+    ]);
     if (revision !== searchRevision) return;
 
     const response = await fetch("/api/find", {
@@ -421,6 +525,7 @@ const search = synchronize(async (
         context,
         continuation,
         contextInterpretation: contextAnalysis?.contextInterpretation,
+        nameAnalysis,
       }),
       signal: activeRequest.signal,
     });
@@ -431,11 +536,13 @@ const search = synchronize(async (
       continuation?: string;
       contextInterpretation?: ContextInterpretation;
       bioMatchWeights?: { keyword: number; jev: number };
+      nameAnalysis?: NameAnalysis;
       error?: string;
     };
     if (!response.ok) throw new Error(body.error || "Search failed");
     if (revision !== searchRevision) return;
     showContextInterpretation(body.contextInterpretation);
+    if (body.nameAnalysis) showNameInterpretation(body.nameAnalysis);
     bioMatchWeights = body.bioMatchWeights;
     candidateSelection.upsert(body.candidates ?? []);
     totalTested += body.testedCount ?? 0;
@@ -537,7 +644,10 @@ results.addEventListener("click", (event) => {
   if (card?.dataset.candidateDid) toggleCandidateLock(card.dataset.candidateDid);
 });
 
-nameInput.addEventListener("input", scheduleSearch);
+nameInput.addEventListener("input", () => {
+  scheduleNameAnalysis();
+  scheduleSearch();
+});
 contextInput.addEventListener("input", () => {
   scheduleContextAnalysis();
   scheduleSearch();

@@ -9,6 +9,10 @@ import {
   type ContextInterpretation,
   type WeightedBioMatchStrategy,
 } from "./bio-match.js";
+import {
+  analyzeName,
+  type NameAnalysis,
+} from "./name-match.js";
 
 export { answerProbability };
 
@@ -16,6 +20,7 @@ export type FindActorsInput = {
   name: string;
   context?: string;
   contextInterpretation?: ContextInterpretation;
+  nameAnalysis?: NameAnalysis;
 };
 
 export type FindActorsPage = {
@@ -25,6 +30,7 @@ export type FindActorsPage = {
   hasMore: boolean;
   contextInterpretation?: ContextInterpretation;
   bioMatchWeights?: { keyword: number; jev: number };
+  nameAnalysis?: NameAnalysis;
 };
 
 export type ActorResult = BlueskyActor & {
@@ -42,12 +48,14 @@ export type ActorResult = BlueskyActor & {
 export const BATCH_SIZE = 100;
 export const MAX_RESULTS = 10;
 export const MAX_CANDIDATES_PER_SEARCH = 100_000;
+export const MAX_SEARCH_QUERIES = 8;
 
 export type SearchState = {
   name: string;
   context: string;
   searches: Array<{ query: string; cursor?: string; exhausted?: boolean }>;
   contextInterpretation?: ContextInterpretation;
+  nameAnalysis?: NameAnalysis;
 };
 
 export type SeenActors = {
@@ -87,6 +95,12 @@ function nameQuestion(actor: BlueskyActor) {
   };
 }
 
+function effectiveName(input: FindActorsInput) {
+  return input.nameAnalysis?.abbreviations.length
+    ? `${input.name} ${input.nameAnalysis.abbreviations.join(" ")}`
+    : input.name;
+}
+
 async function scoreCandidates(
   input: FindActorsInput,
   candidates: BlueskyActor[],
@@ -100,7 +114,7 @@ async function scoreCandidates(
   );
 
   const [nameAnswers, bioMatches] = await Promise.all([
-    askJev(apiKey, { targetName: input.name }, nameQuestions),
+    askJev(apiKey, { targetName: effectiveName(input) }, nameQuestions),
     context
       ? applyBioMatchStrategies(
           bioMatchStrategies(interpretation ?? { keywordProbability: 0.5, freeTextProbability: 0.5 }),
@@ -174,17 +188,21 @@ export function toScore(probability: number) {
 }
 
 export function createQueries(input: FindActorsInput) {
-  const nameParts = input.name.split(/\s+/).filter((part) => part.length >= 3);
-  const compactName = nameParts.join("");
-  return [...new Set(
-    [
-      input.name,
-      compactName,
-      ...nameParts,
-    ]
-      .map((query) => query?.trim())
-      .filter((query): query is string => Boolean(query)),
-  )];
+  const searchName = effectiveName(input);
+  const nameParts = searchName.split(/\s+/).filter((part) => part.length >= 3);
+  const queries = [
+    searchName,
+    ...nameParts,
+  ]
+    .map((query) => query?.trim())
+    .filter((query): query is string => Boolean(query));
+  const seen = new Set<string>();
+  return queries.filter((query) => {
+    const key = query.toLocaleLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, MAX_SEARCH_QUERIES);
 }
 
 export function createSearchState(input: FindActorsInput): SearchState {
@@ -193,7 +211,14 @@ export function createSearchState(input: FindActorsInput): SearchState {
     context: input.context ?? "",
     searches: createQueries(input).map((query) => ({ query })),
     contextInterpretation: input.contextInterpretation,
+    nameAnalysis: input.nameAnalysis,
   };
+}
+
+function applyNameAnalysis(state: SearchState, analysis?: NameAnalysis) {
+  if (!analysis || state.nameAnalysis) return;
+  state.nameAnalysis = analysis;
+  state.searches = createQueries({ name: state.name, nameAnalysis: analysis }).map((query) => ({ query }));
 }
 
 async function nextCandidateBatch(state: SearchState, seen: SeenActors) {
@@ -251,6 +276,18 @@ export async function findActors(
   apiKey: string,
 ): Promise<FindActorsPage> {
   const context = input.context?.trim();
+  let nameAnalysis = state.nameAnalysis ?? input.nameAnalysis;
+  if (!nameAnalysis) {
+    try {
+      nameAnalysis = await analyzeName(input.name, apiKey);
+    } catch (error) {
+      // Name enrichment is additive; a Jev failure must not prevent the
+      // authoritative Bluesky search from proceeding with base queries.
+      console.error("What’s Their @? name analysis failed", error instanceof Error ? error.message : "unknown error");
+      nameAnalysis = { name: input.name, abbreviations: [] };
+    }
+  }
+  applyNameAnalysis(state, nameAnalysis);
   const [candidates, contextInterpretation] = await Promise.all([
     nextCandidateBatch(state, seen),
     context && !state.contextInterpretation
@@ -274,5 +311,6 @@ export async function findActors(
     bioMatchWeights: contextInterpretation
       ? contextStrategyWeights(contextInterpretation)
       : undefined,
+    nameAnalysis: state.nameAnalysis,
   };
 }

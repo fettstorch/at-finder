@@ -79,3 +79,27 @@ test("API creates a Durable Object session and returns a bounded continuation", 
     initialize: true,
   });
 });
+
+test("API exposes bounded name analysis and never asks Jev for generated values", async () => {
+  const originalFetch = globalThis.fetch;
+  let questions: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as { questions: Record<string, unknown> };
+    questions = body.questions;
+    return Response.json({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { type: "noul", noul: 0.9 }])) });
+  };
+  try {
+    const response = await worker.fetch(
+      new Request("https://example.test/api/name", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Florian" }),
+      }),
+      { ...secrets, SEARCH_RATE_LIMITER: allow, SEARCH_SESSIONS: unusedSessions },
+    );
+    assert.deepEqual(await response.json(), { name: "Florian", abbreviations: ["flo"] });
+    assert.ok(questions && Object.values(questions).every((question) => JSON.stringify(question).includes("flo")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

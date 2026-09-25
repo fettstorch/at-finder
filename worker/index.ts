@@ -1,6 +1,7 @@
 import { createContinuation, InvalidContinuationError, readContinuation } from "../src/continuation.js";
 import { classifyContext, contextStrategyWeights } from "../src/bio-match.js";
-import { parseContextRequest, parseFindRequest, RequestError } from "./request.js";
+import { parseContextRequest, parseFindRequest, parseNameRequest, RequestError } from "./request.js";
+import { analyzeName } from "../src/name-match.js";
 export { SearchSession } from "./search-session.js";
 
 type RateLimit = {
@@ -41,7 +42,7 @@ function rateLimitKey(request: Request) {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname !== "/api/find" && url.pathname !== "/api/context") {
+    if (url.pathname !== "/api/find" && url.pathname !== "/api/context" && url.pathname !== "/api/name") {
       return new Response(null, { status: 404 });
     }
     if (request.method !== "POST") {
@@ -76,6 +77,25 @@ export default {
       }
     }
 
+    if (url.pathname === "/api/name") {
+      let input: Awaited<ReturnType<typeof parseNameRequest>>;
+      try {
+        input = await parseNameRequest(request);
+      } catch (error) {
+        if (error instanceof RequestError) return json({ error: error.message }, error.status);
+        return json({ error: "Request body could not be read." }, 400);
+      }
+      if (!env.TYPESAFE_API_KEY) return json({ error: "Service is not configured." }, 503);
+      const allowed = await env.SEARCH_RATE_LIMITER.limit({ key: rateLimitKey(request) });
+      if (!allowed.success) return json({ error: "Too many searches. Please wait before trying again." }, 429);
+      try {
+        return json(await analyzeName(input.name, env.TYPESAFE_API_KEY));
+      } catch (error) {
+        console.error("What’s Their @? name analysis failed", error instanceof Error ? error.message : "unknown error");
+        return json({ error: "Could not analyze name right now." }, 502);
+      }
+    }
+
     let input: Awaited<ReturnType<typeof parseFindRequest>>;
     try {
       input = await parseFindRequest(request);
@@ -99,7 +119,11 @@ export default {
 
     try {
       const normalizedInput = { name: input.name, context: input.context };
-      const sessionInput = { ...normalizedInput, contextInterpretation: input.contextInterpretation };
+      const sessionInput = {
+        ...normalizedInput,
+        ...(input.contextInterpretation ? { contextInterpretation: input.contextInterpretation } : {}),
+        ...(input.nameAnalysis ? { nameAnalysis: input.nameAnalysis } : {}),
+      };
       const claims = input.continuation
         ? await readContinuation(input.continuation, normalizedInput, env.CONTINUATION_SECRET)
         : { sessionId: crypto.randomUUID(), sequence: 0 };
@@ -126,6 +150,7 @@ export default {
         hasMore: boolean;
         contextInterpretation?: { keywordProbability: number; freeTextProbability: number };
         bioMatchWeights?: { keyword: number; jev: number };
+        nameAnalysis?: { name: string; abbreviations: string[] };
         sequence: number;
       };
       const continuation = page.hasMore
@@ -142,6 +167,7 @@ export default {
         testedCount: page.testedCount,
         contextInterpretation: page.contextInterpretation,
         bioMatchWeights: page.bioMatchWeights,
+        nameAnalysis: page.nameAnalysis,
         continuation,
       });
     } catch (error) {

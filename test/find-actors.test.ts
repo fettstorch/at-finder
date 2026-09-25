@@ -5,7 +5,21 @@ import { answerProbability, createQueries, toScore } from "../src/find-actors.js
 test("builds deduplicated search queries from meaningful name parts", () => {
   assert.deepEqual(
     createQueries({ name: "Jo Ada Lovelace" }),
-    ["Jo Ada Lovelace", "AdaLovelace", "Ada", "Lovelace"],
+    ["Jo Ada Lovelace", "Ada", "Lovelace"],
+  );
+});
+
+test("searches the complete enriched name and each meaningful word", () => {
+  assert.deepEqual(
+    createQueries({ name: "Florian Lovelace", nameAnalysis: { name: "Florian Lovelace", abbreviations: ["flo", "lov"] } }),
+    ["Florian Lovelace flo lov", "Florian", "Lovelace", "flo", "lov"],
+  );
+});
+
+test("automatic and manually supplied enrichment produce the same query set", () => {
+  assert.deepEqual(
+    createQueries({ name: "Florian", nameAnalysis: { name: "Florian", abbreviations: ["flo"] } }),
+    createQueries({ name: "Florian flo", nameAnalysis: { name: "Florian flo", abbreviations: [] } }),
   );
 });
 

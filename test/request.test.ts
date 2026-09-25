@@ -24,6 +24,18 @@ test("parses independent context requests and validated interpretations", async 
   );
   assert.deepEqual(
     await parseFindRequest(request(JSON.stringify({
+      name: "Florian",
+      nameAnalysis: { name: "Florian", abbreviations: ["flo"] },
+    }))),
+    {
+      name: "Florian",
+      context: "",
+      continuation: undefined,
+      nameAnalysis: { name: "Florian", abbreviations: ["flo"] },
+    },
+  );
+  assert.deepEqual(
+    await parseFindRequest(request(JSON.stringify({
       name: "Jane",
       context: "Acme",
       contextInterpretation: { keywordProbability: 0.8, freeTextProbability: 0.2 },
@@ -43,6 +55,19 @@ test("parses independent context requests and validated interpretations", async 
     }))),
     /interpretation is invalid/,
   );
+  await assert.rejects(
+    parseFindRequest(request(JSON.stringify({
+      name: "Florian",
+      nameAnalysis: { name: "Florian", abbreviations: ["invented"] },
+    }))),
+    /Name analysis is invalid/,
+  );
+});
+
+test("parses a strict name-analysis request", async () => {
+  const { parseNameRequest } = await import("../worker/request.js");
+  assert.deepEqual(await parseNameRequest(request(JSON.stringify({ name: " Florian " }))), { name: "Florian" });
+  await assert.rejects(parseNameRequest(request(JSON.stringify({ name: "Florian", context: "Acme" }))), /unsupported fields/);
 });
 
 test("requires JSON and rejects unknown fields", async () => {

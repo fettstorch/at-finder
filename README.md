@@ -8,7 +8,7 @@ The browser sends a name, optional context, and later a small signed continuatio
 
 1. validates and rate-limits the request;
 2. routes the search to a per-session Cloudflare Durable Object;
-3. queries the public AT Protocol actor-search endpoint with name-derived queries;
+3. derives conservative short-name proposals, asks Jev only whether those proposals are useful, and queries the public AT Protocol actor-search endpoint with the original and accepted enriched name queries;
 4. asks Jev to score observed candidates for name similarity, context support, and contradiction;
 5. returns up to ten results, including a score breakdown and a short-lived continuation token.
 
@@ -82,7 +82,7 @@ The canonical public URL is `https://whatstheir.at/`. Attach that hostname to th
 
 ## Privacy and security
 
-The service processes the name and optional context entered by a visitor. It sends name-derived search queries to the public Bluesky/AT Protocol actor-search service. It sends the target name or context and public candidate handle, display-name, or bio fields to Jev for scoring. Candidate profiles are public data. Do not submit secrets or sensitive personal information.
+The service processes the name and optional context entered by a visitor. It derives short-name proposals in code and sends only Jev-accepted proposals alongside the original name to the public Bluesky/AT Protocol actor-search service. It sends the target name, proposed short forms, or context and public candidate handle, display-name, or bio fields to Jev for scoring. Candidate profiles are public data. Do not submit secrets or sensitive personal information.
 
 This repository makes no promise about retention by Cloudflare, the AT Protocol service, or Jev; operators should review and disclose the policies that apply to their chosen accounts before launch. API responses and errors are marked `no-store`. Secrets belong in Cloudflare secret bindings or ignored local environment files, never source control.
 

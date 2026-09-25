@@ -205,6 +205,7 @@ export class SearchSession {
       hasMore: page.hasMore,
       contextInterpretation: page.contextInterpretation,
       bioMatchWeights: page.bioMatchWeights,
+      nameAnalysis: page.nameAnalysis,
       sequence: session.sequence,
     });
   }

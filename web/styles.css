@@ -37,6 +37,11 @@ form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:
 .field-tooltip::before { position: absolute; top: -6px; left: 50%; width: 11px; height: 11px; background: #18213a; content: ""; transform: translateX(-50%) rotate(45deg); }
 .field-help:hover .field-tooltip, .field-help:focus-within .field-tooltip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0s; visibility: visible; }
 .context-field { position: relative; }
+.field:not(.context-field) { position: relative; }
+.name-interpretation { position: absolute; z-index: 1; top: 27px; right: 11px; margin: 0; border: 1px solid #cbd7f3;
+  border-radius: 999px; background: #f4f7ff; box-shadow: 0 5px 14px #243d7d1a; color: #49649e;
+  padding: 4px 9px; font-size: 11px; font-weight: 700; line-height: 1.2; white-space: nowrap;
+  transform: translateY(-50%) rotate(-1.5deg); }
 .context-interpretation { position: absolute; z-index: 1; top: 27px; right: 11px; margin: 0; border: 1px solid #cbd7f3;
   border-radius: 999px; background: #f4f7ff; box-shadow: 0 5px 14px #243d7d1a; color: #49649e;
   padding: 4px 9px; font-size: 11px; font-weight: 700; line-height: 1.2; white-space: nowrap;

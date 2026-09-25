@@ -54,6 +54,7 @@
             </div>
             <input id="person-name" name="person_query" type="text" required maxlength="200" aria-describedby="person-name-help"
               autocomplete="off" data-1p-ignore data-lpignore="true" placeholder="e.g. zoe">
+            <p id="name-interpretation" class="name-interpretation" role="status" aria-live="polite" hidden></p>
           </div>
           <div class="field context-field">
             <div class="field-label-row">
@@ -95,7 +96,7 @@
         <span>v%APP_VERSION%</span>
         <span>Made by <a href="https://bsky.app/profile/fettstorch.dev" target="_blank" rel="noreferrer" aria-label="@fettstorch.dev on Bluesky (opens in a new tab)">@fettstorch.dev</a></span>
       </div>
-      <p class="privacy-note">No account is required, and What’s Their @? has no saved-search history. While a search is active, its Cloudflare session stores the entered name and context, search cursors, and identifiers of profiles already checked. Active session storage is cleared when the search finishes or after 15 minutes without activity. The entered name and variants derived from it are sent to Bluesky search. Jev receives the entered name or context plus the relevant public profile handle, display name, or bio for scoring.</p>
+    <p class="privacy-note">No account is required, and What’s Their @? has no saved-search history. While a search is active, its Cloudflare session stores the entered name and context, search cursors, and identifiers of profiles already checked. Active session storage is cleared when the search finishes or after 15 minutes without activity. The entered name and code-generated short-name proposals (when Jev accepts them) are sent to Bluesky search. Jev receives the entered name and proposed short forms, or the context, plus the relevant public profile handle, display name, or bio for scoring.</p>
     </footer>
     <script type="module" src="/web/main.ts"></script>
   </body>
